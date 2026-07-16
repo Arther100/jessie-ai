@@ -1,0 +1,16 @@
+{
+  "name": "jessie-ai",
+  "private": true,
+  "scripts": {
+    "backend":          "cd backend && uvicorn api.main:app --reload --port 8000",
+    "extension":        "cd extension && npm run watch",
+    "web":              "cd web && npm run dev",
+    "dev":              "concurrently \"npm run backend\" \"npm run web\"",
+    "build:web":        "cd web && npm run build",
+    "build:extension":  "cd extension && npm run compile",
+    "test":             "cd backend && python -m pytest ../tests/ -v"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}

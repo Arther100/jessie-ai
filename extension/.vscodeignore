@@ -1,0 +1,15 @@
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+tsconfig.json
+**/*.map
+**/*.ts
+!out/**
+# Dev-only tooling; production deps (axios) must ship in the VSIX
+node_modules/@types/**
+node_modules/typescript/**
+node_modules/@vscode/**
+node_modules/.bin/**
+tests/**
+*.vsix

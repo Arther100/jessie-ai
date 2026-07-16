@@ -1,0 +1,38 @@
+# Secrets — NEVER commit these
+.env
+**/.env
+backend/.jessie/.env
+web/.env.local
+web/.env.production
+
+# Jessie runtime data
+.jessie/
+backend/.jessie/jessie.db
+backend/.jessie/chroma/
+backend/.jessie/chroma_cache/
+backend/.jessie/index_meta_*.json
+reviews/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+
+# Node
+node_modules/
+web/node_modules/
+web/.next/
+extension/node_modules/
+extension/out/
+extension/*.vsix
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.claude/

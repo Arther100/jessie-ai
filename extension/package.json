@@ -1,0 +1,110 @@
+{
+  "name": "jessie-ai",
+  "displayName": "Jessie — AI Coding Agent",
+  "description": "Jessie v2 — Copilot coaching plus Azure Code Review & Merge Review powered by your Claude API key. Same backend as the Jessie web app.",
+  "version": "2.0.0",
+  "publisher": "VijayArther",
+  "icon": "media/jessie-128.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vijaay-arther/jessie-ai"
+  },
+  "bugs": { "url": "https://github.com/vijaay-arther/jessie-ai/issues" },
+  "homepage": "https://github.com/vijaay-arther/jessie-ai#readme",
+  "keywords": ["ai", "copilot", "agent", "prompt", "code quality", "rag", "assistant", "code review", "merge review", "azure", "claude"],
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["AI", "Programming Languages", "Other"],
+  "galleryBanner": { "color": "#1a1a2e", "theme": "dark" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "jessie",
+        "name": "jessie",
+        "fullName": "Jessie AI",
+        "description": "Coaches your prompt, injects codebase context, picks the right model, and quality-checks the output — automatically.",
+        "isSticky": true
+      }
+    ],
+    "commands": [
+      { "command": "jessie.ask",           "title": "Ask Jessie",                    "category": "Jessie" },
+      { "command": "jessie.setup",         "title": "Setup Jessie Backend",          "category": "Jessie" },
+      { "command": "jessie.showRequests",  "title": "My Request Count Today",        "category": "Jessie" },
+      { "command": "jessie.tour",          "title": "How to Use Jessie",             "category": "Jessie" },
+      { "command": "jessie.reviewProject", "title": "Code Review",                   "category": "Jessie", "icon": "$(search)" },
+      { "command": "jessie.reviewAzure",   "title": "Code Review (Azure Branch)",    "category": "Jessie", "icon": "$(cloud)" },
+      { "command": "jessie.mergeReview",   "title": "Merge Review",                  "category": "Jessie", "icon": "$(git-merge)" },
+      { "command": "jessie.history",       "title": "History",                       "category": "Jessie", "icon": "$(history)" },
+      { "command": "jessie.settings",      "title": "Settings",                      "category": "Jessie", "icon": "$(gear)" },
+      { "command": "jessie.info",          "title": "Info (Claude key)",              "category": "Jessie", "icon": "$(info)" }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "jessie.reviewProject",
+          "when": "explorerResourceIsFolder",
+          "group": "jessie@1"
+        }
+      ],
+      "commandPalette": [
+        { "command": "jessie.reviewAzure" },
+        { "command": "jessie.mergeReview" },
+        { "command": "jessie.history" },
+        { "command": "jessie.settings" },
+        { "command": "jessie.info" }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "jessie-sidebar", "title": "Jessie", "icon": "media/jessie.svg" }
+      ]
+    },
+    "views": {
+      "jessie-sidebar": [
+        { "type": "webview", "id": "jessie.panel", "name": "Jessie AI" }
+      ]
+    },
+    "configuration": {
+      "title": "Jessie",
+      "properties": {
+        "jessie.userId": {
+          "type": "string", "default": "",
+          "description": "Your name or team identifier (used for request tracking)"
+        },
+        "jessie.backendUrl": {
+          "type": "string", "default": "http://localhost:8000",
+          "description": "Jessie backend URL. Default: local. Change to your team's hosted URL."
+        },
+        "jessie.webAppUrl": {
+          "type": "string", "default": "http://localhost:3000",
+          "description": "Jessie web app URL (Dashboard / History in browser)."
+        },
+        "jessie.azureGitUrl": {
+          "type": "string", "default": "",
+          "description": "Last used Azure Git URL (https://dev.azure.com/{org}/{project}/_git/{repo})."
+        }
+      }
+    },
+    "keybindings": [
+      { "command": "jessie.ask",           "key": "ctrl+shift+j", "mac": "cmd+shift+j" },
+      { "command": "jessie.reviewProject", "key": "ctrl+shift+r", "mac": "cmd+shift+r" },
+      { "command": "jessie.mergeReview",   "key": "ctrl+shift+m", "mac": "cmd+shift+m" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch":   "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@types/node":   "^20.0.0",
+    "typescript":    "^5.4.0",
+    "@vscode/vsce":  "^3.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.0"
+  }
+}
