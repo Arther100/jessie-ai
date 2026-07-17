@@ -89,22 +89,57 @@ export async function verifyApiKey(
         'X-User-Id': userId || getUserId() || 'setup',
         'X-Workspace-Id': 'setup',
       },
+      signal: AbortSignal.timeout(90_000), // Render free tier cold start can be slow
     });
-    const data = (await res.json()) as {
+
+    if (res.status === 404) {
+      return {
+        ok: false,
+        message:
+          'Backend /verify not found (404). Redeploy the latest Jessie backend to Render, then retry.',
+      };
+    }
+
+    let data: {
       valid?: boolean;
       model?: string;
       message?: string;
       error?: string;
-    };
+      detail?: unknown;
+    } = {};
+    try {
+      data = (await res.json()) as typeof data;
+    } catch {
+      return { ok: false, message: `Backend returned HTTP ${res.status} with no JSON body.` };
+    }
+
     if (res.ok && data.valid) {
       return { ok: true, model: data.model, message: data.message || 'API key is valid ✓' };
     }
+
+    const detailMsg =
+      typeof data.detail === 'object' && data.detail && 'message' in (data.detail as object)
+        ? String((data.detail as { message?: string }).message)
+        : typeof data.detail === 'string'
+          ? data.detail
+          : '';
+
     return {
       ok: false,
-      message: data.message || 'API key rejected. Check your key and try again.',
+      message:
+        data.message ||
+        detailMsg ||
+        `API key rejected (HTTP ${res.status}). Check your key and try again.`,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('aborted') || msg.includes('Timeout') || msg.includes('timeout')) {
+      return {
+        ok: false,
+        message:
+          'Timed out talking to Jessie backend. Wake the Render service (open /health in a browser), wait ~1 min, then retry.',
+      };
+    }
     return { ok: false, message: `Could not reach Jessie backend: ${msg}` };
   }
 }
