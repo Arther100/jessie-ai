@@ -72,6 +72,7 @@ class MergeReviewAgent:
         post_comments: bool = False,
         on_progress=None,
         claude_api_key: str = "",
+        provider: str = "anthropic",
     ) -> dict[str, Any]:
         if on_progress:
             on_progress({"type": "progress", "message": "Resolving merge diff...", "pct": 20})
@@ -79,8 +80,7 @@ class MergeReviewAgent:
         key = (claude_api_key or "").strip()
         if not key:
             raise ValueError(
-                "Claude API key is required. Add your Anthropic key in Jessie Settings "
-                "(web → Settings → Tokens, or extension → Jessie: Settings)."
+                "API key is required. Include X-Claude-API-Key header."
             )
 
         if platform != "azure":
@@ -120,7 +120,8 @@ class MergeReviewAgent:
             on_progress({"type": "progress", "message": "Claude is analysing UI & functionality impact...", "pct": 78})
 
         impact_analysis = await self._claude_impact_analysis(
-            files, commits, stats, base_branch, head_branch, claude_api_key=key,
+            files, commits, stats, base_branch, head_branch,
+            claude_api_key=key, provider=provider or "anthropic",
         )
         issues, missing_items = self._generate_findings(files, stats, change_summary, impact_analysis)
 
@@ -216,6 +217,7 @@ class MergeReviewAgent:
         base_branch: str,
         head_branch: str,
         claude_api_key: str = "",
+        provider: str = "anthropic",
     ) -> dict[str, Any]:
         empty = {
             "summary": "",
@@ -265,7 +267,7 @@ class MergeReviewAgent:
                 "Focus on real product impact. Be specific. Avoid generic statements."
             )
 
-            router = ModelRouter(api_key=claude_api_key)
+            router = ModelRouter(api_key=claude_api_key, provider=provider or "anthropic")
             result = await router.call_claude(
                 prompt=prompt,
                 complexity_score=6,

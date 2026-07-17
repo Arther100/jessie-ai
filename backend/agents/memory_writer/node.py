@@ -16,6 +16,7 @@ def memory_writer_node(state: AgentState) -> AgentState:
     prompt       = state.get("improved_prompt", state.get("original_prompt", ""))
     workspace_id = state.get("workspace_id", "")
     user_id      = state.get("user_id", "anonymous")
+    team_id      = state.get("team_id", "default") or "default"
     language     = state.get("language", "unknown")
     quality      = state.get("quality_score", 0)
     model        = state.get("model_used", "copilot")
@@ -41,7 +42,8 @@ def memory_writer_node(state: AgentState) -> AgentState:
                     "language":   language,
                     "usage":      usage,
                     "created_by": user_id,
-                }
+                },
+                team_id=team_id,
             )
             memory_saved = True
             memory_note  = (
@@ -54,12 +56,13 @@ def memory_writer_node(state: AgentState) -> AgentState:
     memory.write_user(
         user_id=user_id,
         topic="last_successful_prompt",
-        value={"prompt": prompt, "language": language, "quality": quality, "model": model}
+        value={"prompt": prompt, "language": language, "quality": quality, "model": model},
+        team_id=team_id,
     )
 
     # ── Log request count ─────────────────────────────────────────────────
-    memory.increment_request_count(user_id)
-    new_count = memory.get_request_count(user_id)
+    memory.increment_request_count(user_id, team_id=team_id)
+    new_count = memory.get_request_count(user_id, team_id=team_id)
 
     # ── Build final response ──────────────────────────────────────────────
     warning = ""

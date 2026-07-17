@@ -18,12 +18,13 @@ def rag_injector_node(state: AgentState) -> AgentState:
     workspace_id = state.get("workspace_id", "")
     open_file    = state.get("open_file_content", "")
     user_id      = state.get("user_id", "anonymous")
+    team_id      = state.get("team_id", "default") or "default"
 
     status = list(state.get("status_updates", []))
     status.append("🔍 RAG Injector — checking project memory...")
 
     memory  = MemoryStore()
-    indexer = CodebaseIndexer(workspace_id=workspace_id)
+    indexer = CodebaseIndexer(workspace_id=workspace_id, team_id=team_id)
 
     # ── Step 1: Check if component already exists in THIS project ─────────
     component_name = _extract_component_name(prompt)
@@ -32,6 +33,7 @@ def rag_injector_node(state: AgentState) -> AgentState:
         existing = memory.read_project(
             workspace_id=workspace_id,
             topic=f"component:{component_name.lower()}",
+            team_id=team_id,
         )
         if existing:
             status.append(

@@ -14,6 +14,7 @@ import {
   promptAzureConnection,
   workspaceIdFrom,
 } from './azure';
+import { buildAuthHeaders } from './apiKeys';
 import { streamSse } from './sse';
 
 interface ImpactItem {
@@ -166,11 +167,12 @@ export class JessieMergeReview {
     };
 
     try {
+      const authHeaders = await buildAuthHeaders(this._context, body.workspace_id);
       const result = await streamSse(`${backendUrl}/merge/review`, body, (event) => {
         if (event.type === 'progress') {
           this._statusBar.text = `$(loading~spin) Jessie — ${event.message}`;
         }
-      });
+      }, authHeaders);
 
       if (result.type !== 'complete') {
         const msg = String((result as any).message || 'Merge review failed');

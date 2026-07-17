@@ -1,249 +1,301 @@
 /**
  * Jessie — extension/src/setup.ts
- * Guided setup walkthrough on first install.
- * Checks Python, installs dependencies, starts the backend,
- * confirms everything is working before letting the user in.
+ * 3-screen BYOK setup wizard (hosted Railway backend).
+ * Uses VS Code CSS variables only — no hardcoded colors.
  */
 
 import * as vscode from 'vscode';
-import * as cp from 'child_process';
-import * as path from 'path';
-import axios from 'axios';
+import * as crypto from 'crypto';
 import { showTour } from './tour';
+import {
+  getBackendUrl,
+  getProvider,
+  storeApiKey,
+  verifyApiKey,
+  type AiProvider,
+} from './apiKeys';
 
-export async function setupWalkthrough(context: vscode.ExtensionContext, onComplete?: () => void) {
-    const panel = vscode.window.createWebviewPanel(
-        'jessieSetup',
-        'Jessie — Setup',
-        vscode.ViewColumn.One,
-        { enableScripts: true }
-    );
+export async function setupWalkthrough(
+  context: vscode.ExtensionContext,
+  onComplete?: () => void,
+) {
+  const panel = vscode.window.createWebviewPanel(
+    'jessieSetup',
+    'Jessie — Setup',
+    vscode.ViewColumn.One,
+    { enableScripts: true },
+  );
 
-    panel.webview.html = getSetupHtml();
+  const backendUrl = getBackendUrl();
+  let serverOnline = false;
+  try {
+    const res = await fetch(`${backendUrl}/health`, { signal: AbortSignal.timeout(4000) });
+    serverOnline = res.ok;
+  } catch {
+    serverOnline = false;
+  }
 
-    panel.webview.onDidReceiveMessage(async msg => {
-        if (msg.type === 'start_setup') {
-            await runSetup(panel, context, onComplete);
-        }
-        if (msg.type === 'open_settings') {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'jessie');
-        }
-        if (msg.type === 'open_tour') {
-            panel.dispose();
-            showTour(context);
-        }
-    });
-}
+  panel.webview.html = getSetupHtml(backendUrl, serverOnline);
 
-async function runSetup(panel: vscode.WebviewView | any, context: vscode.ExtensionContext, onComplete?: () => void) {
-    const send = (step: string, status: 'running' | 'ok' | 'error', detail = '') => {
-        panel.webview.postMessage({ type: 'step', step, status, detail });
-    };
-
-    // ── Step 1: Find Python ───────────────────────────────────────────────
-    send('python', 'running', 'Looking for Python 3.9+...');
-    const pythonPath = await findPython();
-    if (!pythonPath) {
-        send('python', 'error', 'Python 3.9+ not found. Install from python.org and restart VS Code.');
-        return;
+  panel.webview.onDidReceiveMessage(async (msg) => {
+    if (msg.type === 'open_console') {
+      vscode.env.openExternal(vscode.Uri.parse('https://console.anthropic.com'));
+      return;
     }
-    send('python', 'ok', `Found: ${pythonPath}`);
 
-    // ── Step 2: Find Jessie backend ───────────────────────────────────────
-    send('backend_path', 'running', 'Looking for Jessie backend folder...');
-    const backendPath = await findBackendPath(context);
-    if (!backendPath) {
-        send('backend_path', 'error',
-            'Could not find Jessie backend. Clone the repo and set jessie.backendUrl in settings.');
-        return;
-    }
-    send('backend_path', 'ok', `Found at: ${backendPath}`);
-
-    // ── Step 3: Install dependencies ──────────────────────────────────────
-    send('deps', 'running', 'Installing Python dependencies (this may take a minute)...');
-    const reqFile = path.join(backendPath, 'requirements.txt');
-    const installed = await runCommand(pythonPath, ['-m', 'pip', 'install', '-r', reqFile, '-q']);
-    if (!installed.ok) {
-        send('deps', 'error', `pip install failed: ${installed.stderr}`);
-        return;
-    }
-    send('deps', 'ok', 'All dependencies installed');
-
-    // ── Step 4: Start the backend ─────────────────────────────────────────
-    send('server', 'running', 'Starting Jessie backend server...');
-    startBackend(pythonPath, backendPath);
-
-    // Wait up to 20 seconds for the server to be ready
-    const ready = await waitForBackend('http://localhost:8000', 20);
-    if (!ready) {
-        send('server', 'error',
-            'Backend did not start in time. Check the terminal for errors, or run manually: ' +
-            'cd backend && uvicorn api.main:app --reload');
-        return;
-    }
-    send('server', 'ok', 'Jessie backend running on http://localhost:8000');
-
-    // ── Step 5: Done ──────────────────────────────────────────────────────
-    panel.webview.postMessage({ type: 'done' });
-    onComplete?.();
-}
-
-function findPython(): Promise<string | null> {
-    return new Promise(resolve => {
-        const candidates = ['python3', 'python', 'python3.11', 'python3.10', 'python3.9'];
-        let found = 0;
-        for (const cmd of candidates) {
-            cp.exec(`${cmd} --version`, (err, stdout) => {
-                found++;
-                if (!err && stdout.includes('Python 3')) {
-                    resolve(cmd);
-                    return;
-                }
-                if (found === candidates.length) resolve(null);
-            });
-        }
-    });
-}
-
-async function findBackendPath(context: vscode.ExtensionContext): Promise<string | null> {
-    // Check common locations
-    const candidates = [
-        path.join(context.extensionPath, '..', 'backend'),
-        path.join(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', 'backend'),
-    ];
-    for (const p of candidates) {
-        try {
-            await vscode.workspace.fs.stat(vscode.Uri.file(path.join(p, 'requirements.txt')));
-            return p;
-        } catch {}
-    }
-    return null;
-}
-
-function runCommand(python: string, args: string[]): Promise<{ ok: boolean; stderr: string }> {
-    return new Promise(resolve => {
-        cp.execFile(python, args, { timeout: 120_000 }, (err, _, stderr) => {
-            resolve({ ok: !err, stderr: stderr || '' });
+    if (msg.type === 'validate_key') {
+      const key = String(msg.key || '').trim();
+      const provider = (msg.provider || 'anthropic') as AiProvider;
+      if (!key) {
+        panel.webview.postMessage({
+          type: 'validate_result',
+          ok: false,
+          message: 'Enter an API key first.',
         });
-    });
-}
-
-function startBackend(_python: string, backendPath: string) {
-    // Use a visible terminal so startup errors are readable
-    const term = vscode.window.createTerminal({
-        name: 'Jessie Backend',
-        cwd: backendPath,
-    });
-    term.show(true);
-    term.sendText('python -m uvicorn api.main:app --reload --port 8000');
-}
-
-async function waitForBackend(url: string, seconds: number): Promise<boolean> {
-    for (let i = 0; i < seconds; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        try {
-            await axios.get(`${url}/health`, { timeout: 1000 });
-            return true;
-        } catch {}
+        return;
+      }
+      panel.webview.postMessage({ type: 'validate_status', message: 'Checking key...' });
+      const result = await verifyApiKey(backendUrl, key, provider);
+      if (result.ok) {
+        await storeApiKey(context, key);
+        await vscode.workspace
+          .getConfiguration('jessie')
+          .update('aiProvider', provider, vscode.ConfigurationTarget.Global);
+      }
+      panel.webview.postMessage({
+        type: 'validate_result',
+        ok: result.ok,
+        model: result.model || '',
+        message: result.message,
+      });
+      return;
     }
-    return false;
+
+    if (msg.type === 'finish') {
+      const name = String(msg.name || '').trim();
+      if (!name) {
+        panel.webview.postMessage({
+          type: 'finish_error',
+          message: 'Please enter your name.',
+        });
+        return;
+      }
+      await vscode.workspace
+        .getConfiguration('jessie')
+        .update('userId', name, vscode.ConfigurationTarget.Global);
+      await context.globalState.update('jessie.setupComplete', true);
+      panel.webview.postMessage({ type: 'ready' });
+      onComplete?.();
+      return;
+    }
+
+    if (msg.type === 'open_tour') {
+      panel.dispose();
+      showTour(context);
+    }
+
+    if (msg.type === 'close') {
+      panel.dispose();
+    }
+  });
 }
 
-function getSetupHtml(): string {
-    return `<!DOCTYPE html>
+function getSetupHtml(backendUrl: string, online: boolean): string {
+  const status = online
+    ? '✓ Server is online'
+    : '⚠ Server unreachable — check jessie.backendUrl';
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         max-width: 560px; margin: 40px auto; padding: 0 20px;
-         color: var(--vscode-foreground);
-         background: var(--vscode-editor-background); }
-  h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px;
-       color: var(--vscode-foreground); }
-  p  { font-size: 13px; color: var(--vscode-descriptionForeground); margin-bottom: 24px; }
-  .step { display: flex; align-items: flex-start; gap: 12px;
-          padding: 10px 0; border-bottom: 1px solid var(--vscode-widget-border, #444);
-          font-size: 13px; }
-  .icon { width: 20px; text-align: center; flex-shrink: 0; margin-top: 1px; }
-  .step-name { font-weight: 500; color: var(--vscode-foreground); }
-  .step-detail { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
-  .ok    { color: #4caf50; }
-  .error { color: #f44336; }
-  .spin  { animation: spin 1s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  button { margin-top: 24px; padding: 10px 24px;
-           background: var(--vscode-button-background, #0078d4);
-           color: var(--vscode-button-foreground, #fff);
-           border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
-  button:hover { background: var(--vscode-button-hoverBackground, #005fa3); }
-  .done-box { background: var(--vscode-inputValidation-infoBackground, #1b3a1b);
-              border: 1px solid #4caf50; border-radius: 8px;
-              padding: 16px; margin-top: 20px; font-size: 13px;
-              color: var(--vscode-foreground); display: none; }
-  .error-detail { color: #f44336; word-break: break-word; }
-  .tour-btn { margin-top: 12px; padding: 8px 20px;
-              background: var(--vscode-button-background);
-              color: var(--vscode-button-foreground);
-              border: none; border-radius: 6px; font-size: 13px;
-              cursor: pointer; display: block; }
+  :root { color-scheme: light dark; }
+  body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    margin: 0;
+    padding: 24px;
+    line-height: 1.5;
+  }
+  .screen { display: none; max-width: 520px; margin: 0 auto; }
+  .screen.active { display: block; }
+  h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 12px; }
+  p { opacity: 0.9; margin: 0 0 12px; }
+  .muted { opacity: 0.7; font-size: 0.92em; }
+  code {
+    background: var(--vscode-textCodeBlock-background);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .tabs { display: flex; gap: 8px; margin: 16px 0 12px; flex-wrap: wrap; }
+  .tab {
+    border: 1px solid var(--vscode-button-secondaryBackground);
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tab.active {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-color: var(--vscode-focusBorder);
+  }
+  input[type="password"], input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    margin: 8px 0 16px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, var(--vscode-widget-border));
+    border-radius: 4px;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  button {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 10px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .msg { margin-top: 10px; min-height: 1.2em; }
+  .ok { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+  .err { color: var(--vscode-errorForeground); }
+  .server { margin: 12px 0 20px; padding: 10px 12px;
+    border-left: 3px solid var(--vscode-focusBorder);
+    background: var(--vscode-textBlockQuote-background);
+  }
 </style>
 </head>
 <body>
-<h1>⚡ Jessie Setup</h1>
-<p>Let's get your Jessie backend running. This only takes a minute and happens once.</p>
+  <div id="s1" class="screen active">
+    <h1>⚡ Welcome to Jessie AI</h1>
+    <div class="server">
+      Jessie is hosted at:<br/>
+      <code>${escapeHtml(backendUrl)}</code><br/>
+      <span class="${online ? 'ok' : 'err'}">${status}</span>
+    </div>
+    <p>You need one thing to get started:<br/><strong>Your own Claude API key.</strong></p>
+    <p class="muted">This lets you use Jessie anywhere. Your key is stored only on this device (VS Code SecretStorage) — never on Jessie servers.</p>
+    <div class="actions">
+      <button onclick="go(2)">I have a Claude API key →</button>
+      <button class="secondary" onclick="post({type:'open_console'})">Get a free Claude API key →</button>
+    </div>
+  </div>
 
-<div class="step" id="step-python">
-  <span class="icon">○</span>
-  <div><div class="step-name">Find Python 3.9+</div><div class="step-detail" id="det-python"></div></div>
-</div>
-<div class="step" id="step-backend_path">
-  <span class="icon">○</span>
-  <div><div class="step-name">Find Jessie backend folder</div><div class="step-detail" id="det-backend_path"></div></div>
-</div>
-<div class="step" id="step-deps">
-  <span class="icon">○</span>
-  <div><div class="step-name">Install Python dependencies</div><div class="step-detail" id="det-deps"></div></div>
-</div>
-<div class="step" id="step-server">
-  <span class="icon">○</span>
-  <div><div class="step-name">Start Jessie backend</div><div class="step-detail" id="det-server"></div></div>
-</div>
+  <div id="s2" class="screen">
+    <h1>Enter your Claude API key</h1>
+    <p class="muted">Starts with sk-ant- (Anthropic) or sk- (OpenAI)</p>
+    <div class="tabs">
+      <button class="tab active" data-p="anthropic" onclick="setProvider('anthropic')">Anthropic</button>
+      <button class="tab" data-p="openai" onclick="setProvider('openai')">OpenAI</button>
+      <button class="tab" data-p="gemini" onclick="setProvider('gemini')">Gemini</button>
+    </div>
+    <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" />
+    <div class="actions">
+      <button class="secondary" onclick="go(1)">← Back</button>
+      <button id="validateBtn" onclick="validate()">Validate &amp; continue</button>
+    </div>
+    <div id="validateMsg" class="msg"></div>
+  </div>
 
-<button id="start-btn" onclick="start()">Start Setup</button>
+  <div id="s3" class="screen">
+    <h1>What's your name?</h1>
+    <p class="muted">Used to track your usage and personalise Jessie's responses.</p>
+    <input id="userName" type="text" placeholder="e.g. vijay" />
+    <div class="actions">
+      <button class="secondary" onclick="go(2)">← Back</button>
+      <button onclick="finish()">Finish setup</button>
+    </div>
+    <div id="finishMsg" class="msg"></div>
+  </div>
 
-<div class="done-box" id="done-box">
-  ✅ Jessie is ready! Press <strong>Ctrl+Shift+J</strong> to start coding.
-  <button class="tour-btn" onclick="openTour()">📖 Take the tour →</button>
-</div>
+  <div id="s4" class="screen">
+    <h1>✓ Jessie is ready!</h1>
+    <p>Your API key is stored securely on this device. Status bar shows Jessie — ready.</p>
+    <div class="actions">
+      <button onclick="post({type:'open_tour'})">Take the tour</button>
+      <button class="secondary" onclick="post({type:'close'})">Close</button>
+    </div>
+  </div>
 
 <script>
   const vscode = acquireVsCodeApi();
-  function start() {
-    document.getElementById('start-btn').disabled = true;
-    document.getElementById('start-btn').textContent = 'Setting up...';
-    vscode.postMessage({ type: 'start_setup' });
+  let provider = 'anthropic';
+  function post(msg) { vscode.postMessage(msg); }
+  function go(n) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('s' + n).classList.add('active');
   }
-  function openTour() { vscode.postMessage({ type: 'open_tour' }); }
-  window.addEventListener('message', e => {
+  function setProvider(p) {
+    provider = p;
+    document.querySelectorAll('.tab').forEach(t => {
+      t.classList.toggle('active', t.getAttribute('data-p') === p);
+    });
+    const ph = p === 'openai' ? 'sk-...' : p === 'gemini' ? 'AIza...' : 'sk-ant-...';
+    document.getElementById('apiKey').placeholder = ph;
+  }
+  function validate() {
+    const key = document.getElementById('apiKey').value;
+    const btn = document.getElementById('validateBtn');
+    btn.disabled = true;
+    document.getElementById('validateMsg').textContent = 'Checking key...';
+    post({ type: 'validate_key', key, provider });
+  }
+  function finish() {
+    post({ type: 'finish', name: document.getElementById('userName').value });
+  }
+  window.addEventListener('message', (e) => {
     const msg = e.data;
-    if (msg.type === 'step') {
-      const icon = document.querySelector('#step-' + msg.step + ' .icon');
-      const det  = document.getElementById('det-' + msg.step);
-      if (msg.status === 'running') { icon.textContent = '⟳'; icon.className = 'icon spin'; }
-      if (msg.status === 'ok')      { icon.textContent = '✓'; icon.className = 'icon ok'; }
-      if (msg.status === 'error')   { icon.textContent = '✗'; icon.className = 'icon error'; }
-      if (det) {
-        det.textContent = msg.detail;
-        det.className = 'step-detail' + (msg.status === 'error' ? ' error-detail' : '');
+    if (msg.type === 'validate_status') {
+      document.getElementById('validateMsg').textContent = msg.message;
+    }
+    if (msg.type === 'validate_result') {
+      document.getElementById('validateBtn').disabled = false;
+      const el = document.getElementById('validateMsg');
+      if (msg.ok) {
+        el.className = 'msg ok';
+        el.textContent = '✓ Key valid' + (msg.model ? ' (' + msg.model + ')' : '');
+        setTimeout(() => go(3), 500);
+      } else {
+        el.className = 'msg err';
+        el.textContent = '✗ Invalid key — ' + (msg.message || 'check and retry');
       }
     }
-    if (msg.type === 'done') {
-      document.getElementById('done-box').style.display = 'block';
-      document.getElementById('start-btn').style.display = 'none';
+    if (msg.type === 'finish_error') {
+      const el = document.getElementById('finishMsg');
+      el.className = 'msg err';
+      el.textContent = msg.message;
+    }
+    if (msg.type === 'ready') {
+      go(4);
     }
   });
 </script>
 </body>
 </html>`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Used by status bar when no key is set. */
+export function getWorkspaceId(): string {
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  return crypto.createHash('md5').update(folder).digest('hex').slice(0, 12);
 }

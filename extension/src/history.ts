@@ -124,7 +124,7 @@ export async function showJessieSettings(context: vscode.ExtensionContext): Prom
   if (action.id === 'backend') {
     const v = await vscode.window.showInputBox({
       prompt: 'Jessie backend URL',
-      value: cfg.get<string>('backendUrl') || 'http://localhost:8000',
+      value: cfg.get<string>('backendUrl') || 'https://jessie-ai-xpv2.onrender.com',
     });
     if (v !== undefined) await cfg.update('backendUrl', v, true);
     return;

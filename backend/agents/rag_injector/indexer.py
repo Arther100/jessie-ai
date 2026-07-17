@@ -25,10 +25,12 @@ MAX_FILE_KB = 50
 
 
 class CodebaseIndexer:
-    def __init__(self, workspace_id: str):
+    def __init__(self, workspace_id: str, team_id: str = "default"):
         self.workspace_id  = workspace_id
-        self.collection_id = f"jessie_{workspace_id}"
-        self.meta_path     = Path(f".jessie/index_meta_{workspace_id}.json")
+        self.team_id       = team_id or "default"
+        # Team isolation: collections never shared across API-key teams
+        self.collection_id = f"jessie_{self.team_id}_{workspace_id}"
+        self.meta_path     = Path(f".jessie/index_meta_{self.team_id}_{workspace_id}.json")
 
         if CHROMA_AVAILABLE:
             self.client     = chromadb.PersistentClient(path=".jessie/chroma")

@@ -27,7 +27,10 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Team code quality overview</p>
         </div>
         <div className="flex gap-3">
-          <Link href="/review" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
+          <Link href="/tickets" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors">
+            Open ticket board
+          </Link>
+          <Link href="/review" className="px-4 py-2 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-sm font-medium transition-colors">
             Run Code Review
           </Link>
           <Link href="/merge" className="px-4 py-2 rounded-lg border dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 text-sm font-medium transition-colors">
@@ -35,6 +38,14 @@ export default function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      <section className="rounded-xl border dark:border-gray-700 bg-white dark:bg-gray-900 p-4 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Sprint Overview</h2>
+          <p className="text-sm text-gray-500">Jessie v3 ticket board · scan sprint · auto-fixable work</p>
+        </div>
+        <Link href="/sprint" className="text-sm text-indigo-600 hover:underline">Sprint health →</Link>
+      </section>
 
       {statsLoading ? (
         <div className="flex items-center gap-2 text-gray-400"><Loader2 size={16} className="animate-spin" /> Loading stats...</div>

@@ -19,11 +19,13 @@ GET  /requests/{user_id} — request count for today
 import json
 import os
 import sqlite3
+import time
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from core.state import AgentState
@@ -34,20 +36,24 @@ from agents.quality_analyser.node import quality_analyser_node
 from agents.memory_writer.node import memory_writer_node
 from memory.store import MemoryStore, DB_PATH
 from gateway.proxy import process_request
+from gateway.auth_headers import auth_from_request
+from gateway.model_router import ModelRouter
 from api.review import review_router
 from api.merge_review import merge_router
 from api.webhooks import webhook_router
 from api.fs_browse import fs_router
+from api.tickets import ticket_router, sprint_router, analytics_router
 
-app = FastAPI(title="Jessie API", version="1.0.0")
+app = FastAPI(title="Jessie API", version="3.0.0")
 
-_ALLOWED_ORIGINS = [
+_allowed = [
     "http://localhost:3000",
     "http://localhost:3001",
     "https://*.vercel.app",
     "vscode-webview://*",
-    os.getenv("ALLOWED_ORIGIN", "http://localhost:3000"),
+    os.getenv("ALLOWED_ORIGIN", ""),
 ]
+_ALLOWED_ORIGINS = [o for o in _allowed if o]
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,10 +63,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def https_redirect_middleware(request: Request, call_next):
+    """In production, prefer HTTPS (Railway terminates TLS; honor X-Forwarded-Proto)."""
+    debug = os.getenv("JESSIE_DEBUG", "").lower() in ("1", "true", "yes")
+    if not debug and os.getenv("RAILWAY_ENVIRONMENT"):
+        proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if proto == "http":
+            url = request.url.replace(scheme="https")
+            return RedirectResponse(str(url), status_code=308)
+    return await call_next(request)
+
+
+# /verify rate limit: max 3 attempts per IP per hour
+_VERIFY_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_VERIFY_MAX = 3
+_VERIFY_WINDOW = 3600
+
+
+def _check_verify_rate_limit(ip: str) -> bool:
+    now = time.time()
+    window = _VERIFY_ATTEMPTS[ip]
+    _VERIFY_ATTEMPTS[ip] = [t for t in window if now - t < _VERIFY_WINDOW]
+    if len(_VERIFY_ATTEMPTS[ip]) >= _VERIFY_MAX:
+        return False
+    _VERIFY_ATTEMPTS[ip].append(now)
+    return True
+
+
 app.include_router(review_router,  prefix="/review")
 app.include_router(merge_router,   prefix="/merge")
 app.include_router(webhook_router, prefix="/webhook")
 app.include_router(fs_router,      prefix="/fs")
+# Jessie v3 — DevOps intelligence (additive)
+app.include_router(ticket_router,     prefix="/tickets")
+app.include_router(sprint_router,     prefix="/sprint")
+app.include_router(analytics_router,  prefix="/analytics")
 
 
 # ── Request / Response models ──────────────────────────────────────────────
@@ -122,19 +161,21 @@ class ResumeResponse(BaseModel):
 # ── /prepare endpoint ──────────────────────────────────────────────────────
 
 @app.post("/prepare", response_model=PrepareResponse)
-async def prepare(req: PrepareRequest):
+async def prepare(req: PrepareRequest, request: Request):
     """
     Phase 1: Prompt Coach + RAG Injector.
-    Returns improved prompt for developer approval.
-    Extension calls Copilot after approval, then calls /resume.
+    Requires X-Claude-API-Key (for team isolation) + X-User-Id + X-Workspace-Id.
     """
-    state: AgentState = _base_state(req)
+    auth = auth_from_request(request, require_key=True)
+    state: AgentState = _base_state(req, auth.team_id, auth.provider, auth.api_key)
+    if auth.user_id and auth.user_id != "anon":
+        state["user_id"] = auth.user_id
+    if auth.workspace_id and auth.workspace_id != "default":
+        state["workspace_id"] = auth.workspace_id
 
-    # Run supervisor → prompt coach → rag injector
     state = supervisor_node(state)
     state = prompt_coach_node(state)
 
-    # If trivial (complexity <= 2) skip RAG
     if state["complexity_score"] > 2:
         state = rag_injector_node(state)
 
@@ -145,7 +186,7 @@ async def prepare(req: PrepareRequest):
         complexity_score = state.get("complexity_score", 5),
         component_exists = state.get("component_exists", False),
         component_path   = state.get("component_path", ""),
-        generated_code   = state.get("generated_code", ""),  # set if component reuse
+        generated_code   = state.get("generated_code", ""),
         status_updates   = state.get("status_updates", []),
     )
 
@@ -153,18 +194,20 @@ async def prepare(req: PrepareRequest):
 # ── /resume endpoint ───────────────────────────────────────────────────────
 
 @app.post("/resume", response_model=ResumeResponse)
-async def resume(req: ResumeRequest):
+async def resume(req: ResumeRequest, request: Request):
     """
     Phase 2: Quality Analyser + Memory Writer.
-    Receives Copilot's output from the extension.
-    Returns final response or retry instruction.
     """
+    auth = auth_from_request(request, require_key=True)
     state: AgentState = {
         "original_prompt":   req.improved_prompt,
         "improved_prompt":   req.improved_prompt,
         "prompt_diff":       req.prompt_diff,
-        "user_id":           req.user_id,
-        "workspace_id":      req.workspace_id,
+        "user_id":           auth.user_id or req.user_id,
+        "workspace_id":      auth.workspace_id or req.workspace_id,
+        "team_id":           auth.team_id,
+        "ai_provider":       auth.provider,
+        "claude_api_key":    auth.api_key,
         "language":          req.language,
         "open_file_content": req.open_file_content or "",
         "selected_code":     req.selected_code or "",
@@ -212,39 +255,36 @@ async def resume(req: ResumeRequest):
 
 class ProxyRequest(BaseModel):
     prompt:            str
-    user_id:           str
-    workspace_id:      str
+    user_id:           str = ""
+    workspace_id:      str = ""
     language:          Optional[str] = ""
     open_file_content: Optional[str] = ""
     selected_code:     Optional[str] = ""
     error_message:     Optional[str] = ""
-    priority:          Optional[int] = 0   # 0=normal, 1=senior dev
+    priority:          Optional[int] = 0
 
 
 @app.post("/proxy")
-async def proxy(req: ProxyRequest):
-    """
-    Full gateway pipeline streamed as Server-Sent Events.
+async def proxy(req: ProxyRequest, request: Request):
+    """Full gateway pipeline streamed as Server-Sent Events. Requires BYOK headers."""
+    auth = auth_from_request(request, require_key=True)
+    user_id = auth.user_id if auth.user_id != "anon" else (req.user_id or "anon")
+    workspace_id = auth.workspace_id if auth.workspace_id != "default" else (req.workspace_id or "default")
 
-    Each SSE frame is one JSON object on a  data: ...  line.
-    Frame types:
-      {"type": "status",  "message": "..."}          ← live status bar update
-      {"type": "result",  "response": "...", ...}    ← final answer
-      {"type": "error",   "code": "...", "message": "..."}
-
-    The stream ends with  data: [DONE]
-    """
     async def _generate():
         try:
             async for event in process_request(
                 prompt            = req.prompt,
-                user_id           = req.user_id,
-                workspace_id      = req.workspace_id,
+                user_id           = user_id,
+                workspace_id      = workspace_id,
                 language          = req.language or "",
                 open_file_content = req.open_file_content or "",
                 selected_code     = req.selected_code or "",
                 error_message     = req.error_message or "",
                 priority          = req.priority or 0,
+                api_key           = auth.api_key,
+                provider          = auth.provider,
+                team_id           = auth.team_id,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as exc:
@@ -258,9 +298,59 @@ async def proxy(req: ProxyRequest):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # disable nginx buffering if proxied
+            "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── /verify — validate BYOK API key (setup wizard) ─────────────────────────
+
+@app.post("/verify")
+async def verify_api_key(request: Request):
+    """
+    Minimal provider test call. Rate-limited: 3 attempts per IP per hour.
+    Never stores the key.
+    """
+    client_ip = (
+        request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    if not _check_verify_rate_limit(client_ip):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "valid": False,
+                "error": "rate_limited",
+                "message": "Too many verify attempts. Max 3 per hour. Try again later.",
+            },
+        )
+
+    try:
+        auth = auth_from_request(request, require_key=True)
+    except Exception as exc:
+        from fastapi import HTTPException
+        if isinstance(exc, HTTPException):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        raise
+
+    try:
+        router = ModelRouter(api_key=auth.api_key, provider=auth.provider)
+        result = await router.verify_key()
+        return result
+    except Exception:
+        # Never echo key material in errors
+        return JSONResponse(
+            status_code=401,
+            content={
+                "valid": False,
+                "error": "invalid_key",
+                "message": (
+                    "API key rejected by Anthropic. Check your key at console.anthropic.com"
+                    if auth.provider == "anthropic"
+                    else f"API key rejected by {auth.provider.title()}. Check your key."
+                ),
+            },
+        )
 
 
 # ── /team/usage ────────────────────────────────────────────────────────────
@@ -278,7 +368,7 @@ async def team_usage(workspace_id: str = "", user_id: str = "admin"):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "3.0.0"}
 
 
 # ── /reports ───────────────────────────────────────────────────────────────
@@ -494,11 +584,14 @@ async def get_requests(user_id: str):
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
-def _base_state(req: PrepareRequest) -> AgentState:
+def _base_state(req: PrepareRequest, team_id: str = "default", provider: str = "anthropic", api_key: str = "") -> AgentState:
     return {
         "original_prompt":   req.prompt,
         "user_id":           req.user_id,
         "workspace_id":      req.workspace_id or "",
+        "team_id":           team_id,
+        "ai_provider":       provider,
+        "claude_api_key":    api_key,
         "language":          req.language or "",
         "open_file_content": req.open_file_content or "",
         "selected_code":     req.selected_code or "",

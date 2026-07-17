@@ -127,29 +127,22 @@ async def process_request(
     selected_code:     str = "",
     error_message:     str = "",
     priority:          int = 0,
+    api_key:           str = "",
+    provider:          str = "anthropic",
+    team_id:           str = "default",
 ) -> AsyncGenerator[dict, None]:
     """
     Async generator — yields status dicts, then one final result/error dict.
 
-    The FastAPI /proxy endpoint iterates this and forwards each event as an
-    SSE frame so the VS Code extension can update the status bar in real time.
-
-    Args:
-        prompt:            Raw developer prompt from Claude Code chat.
-        user_id:           From jessie.userId VS Code setting.
-        workspace_id:      MD5 hash of workspace folder path (project isolation).
-        language:          Language ID of the active editor file.
-        open_file_content: First 3 000 chars of the active file.
-        selected_code:     Highlighted text in the editor, if any.
-        error_message:     Terminal error text, if any.
-        priority:          0=normal, 1=senior dev (skips queue ahead of 0).
+    api_key is request-scoped only — never logged or stored.
+    team_id = sha256(api_key)[:16] for quota/cache/memory isolation.
     """
 
     # ── Layer 1: Quota ──────────────────────────────────────────────────────
     yield _status("$(loading~spin) Jessie — checking quota...")
     quota = None
     try:
-        quota = QuotaManager(user_id=user_id, workspace_id=workspace_id)
+        quota = QuotaManager(user_id=user_id, workspace_id=workspace_id, team_id=team_id)
         if not quota.is_allowed():
             yield _error(
                 f"Daily request limit reached for '{user_id}' "
@@ -167,7 +160,7 @@ async def process_request(
     yield _status("$(loading~spin) Jessie — checking cache...")
     cache = None
     try:
-        cache = SemanticCache(workspace_id=workspace_id)
+        cache = SemanticCache(workspace_id=workspace_id, team_id=team_id)
         cached = cache.search_similar(prompt)
         if cached is not None:
             saved = len(prompt) // 4 + len(cached) // 4
@@ -191,6 +184,9 @@ async def process_request(
         prompt, user_id, workspace_id,
         language, open_file_content, selected_code, error_message,
     )
+    state["team_id"] = team_id
+    state["ai_provider"] = provider
+    state["claude_api_key"] = api_key  # request-scoped; nodes must not persist
 
     try:
         state = supervisor_node(state)
@@ -261,7 +257,7 @@ async def process_request(
     total_cost = 0.0
 
     try:
-        router = ModelRouter()
+        router = ModelRouter(api_key=api_key, provider=provider)
 
         async def _call_claude():
             return await router.call_claude(

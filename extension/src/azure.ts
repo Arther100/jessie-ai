@@ -4,9 +4,17 @@
 
 import * as vscode from 'vscode';
 import axios from 'axios';
+import {
+  API_KEY_SECRET,
+  clearApiKey,
+  getApiKey,
+  storeApiKey,
+  promptForApiKey,
+} from './apiKeys';
 
 const SECRET_KEY = 'jessie.azurePat';
-const CLAUDE_SECRET_KEY = 'jessie.claudeApiKey';
+/** @deprecated use API_KEY_SECRET from apiKeys — kept for re-exports */
+const CLAUDE_SECRET_KEY = API_KEY_SECRET;
 
 export interface AzureRepoRef {
   org: string;
@@ -53,48 +61,26 @@ export async function clearPat(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function getStoredClaudeKey(context: vscode.ExtensionContext): Promise<string> {
-  return (await context.secrets.get(CLAUDE_SECRET_KEY)) || '';
+  return getApiKey(context);
 }
 
 export async function storeClaudeKey(context: vscode.ExtensionContext, key: string): Promise<void> {
-  await context.secrets.store(CLAUDE_SECRET_KEY, key);
+  await storeApiKey(context, key);
 }
 
 export async function clearClaudeKey(context: vscode.ExtensionContext): Promise<void> {
-  await context.secrets.delete(CLAUDE_SECRET_KEY);
+  await clearApiKey(context);
 }
 
-/** Prompt for Anthropic Claude API key if not saved. Returns empty string if cancelled. */
+/** Prompt for API key if not saved. Returns empty string if cancelled. */
 export async function ensureClaudeApiKey(context: vscode.ExtensionContext): Promise<string> {
-  const saved = await getStoredClaudeKey(context);
-  const key = await vscode.window.showInputBox({
-    prompt: 'Anthropic Claude API key (required for Code Review & Merge Review)',
-    placeHolder: 'sk-ant-...',
-    password: true,
-    ignoreFocusOut: true,
-    value: saved ? '********' : '',
-    validateInput: (v) => {
-      const t = v.trim();
-      if (t === '********' && saved) return undefined;
-      if (!t) return 'API key is required';
-      if (!t.startsWith('sk-ant-') && !t.startsWith('sk-')) return 'Key should start with sk-ant-';
-      return undefined;
-    },
-  });
-  if (key === undefined) return '';
-  const resolved = key === '********' || key.trim() === '' ? saved : key.trim();
-  if (!resolved) {
-    vscode.window.showWarningMessage('Claude API key is required. Set it under Jessie: Settings.');
-    return '';
-  }
-  if (key !== '********') {
-    await storeClaudeKey(context, resolved);
-  }
-  return resolved;
+  const existing = await getApiKey(context);
+  if (existing) return existing;
+  return (await promptForApiKey(context)) || '';
 }
 
 export function getBackendUrl(): string {
-  return vscode.workspace.getConfiguration('jessie').get<string>('backendUrl') || 'http://localhost:8000';
+  return vscode.workspace.getConfiguration('jessie').get<string>('backendUrl') || 'https://jessie-ai-xpv2.onrender.com';
 }
 
 export function getUserId(): string {

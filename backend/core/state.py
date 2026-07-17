@@ -4,7 +4,7 @@ Single shared state object that flows through every LangGraph node.
 Each node reads from it, does its job, writes back to it.
 """
 
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, NotRequired
 
 
 class AgentState(TypedDict):
@@ -52,3 +52,19 @@ class AgentState(TypedDict):
     final_response:     str       # cleaned code + explanation
     status_updates:     List[str] # live progress messages for sidebar/status bar
     request_count:      int       # this user's request count today
+
+    # ── JESSIE v3 TICKET AGENT (optional / NotRequired for v1-v2 compat) ──
+    ticket_id:          NotRequired[str]
+    ticket_platform:    NotRequired[str]
+    ticket_data:        NotRequired[dict]
+    ticket_complexity:  NotRequired[int]
+    fix_code:           NotRequired[str]
+    fix_test:           NotRequired[str]
+    branch_name:        NotRequired[str]
+    pr_number:          NotRequired[int]
+    pr_url:             NotRequired[str]
+    ticket_updated:     NotRequired[bool]
+    ticket_mode:        NotRequired[bool]
+    claude_api_key:     NotRequired[str]  # request-scoped only; never persist
+    team_id:            NotRequired[str]  # sha256(api_key)[:16]
+    ai_provider:        NotRequired[str]  # anthropic|openai|gemini

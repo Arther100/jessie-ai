@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { Navbar } from "@/components/layout/Navbar";
+import { ApiKeyGate } from "@/components/ApiKeyGate";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
@@ -16,10 +17,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 min-h-screen`}>
         <Providers>
-          <Navbar />
-          <main className="max-w-screen-xl mx-auto px-4 py-8">
-            {children}
-          </main>
+          <ApiKeyGate>
+            <Navbar />
+            <main className="max-w-screen-xl mx-auto px-4 py-8">
+              {children}
+            </main>
+          </ApiKeyGate>
         </Providers>
       </body>
     </html>

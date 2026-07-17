@@ -1,16 +1,16 @@
 {
   "name": "jessie-ai",
   "displayName": "Jessie — AI Coding Agent",
-  "description": "Jessie v2 — Copilot coaching plus Azure Code Review & Merge Review powered by your Claude API key. Same backend as the Jessie web app.",
-  "version": "2.0.0",
+  "description": "Jessie v3 — hosted BYOK AI coding agent. Code Review, Merge Review, tickets. Your API key stays on your device.",
+  "version": "3.0.0",
   "publisher": "VijayArther",
   "icon": "media/jessie-128.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vijaay-arther/jessie-ai"
+    "url": "https://github.com/Arther100/jessie-ai"
   },
-  "bugs": { "url": "https://github.com/vijaay-arther/jessie-ai/issues" },
-  "homepage": "https://github.com/vijaay-arther/jessie-ai#readme",
+  "bugs": { "url": "https://github.com/Arther100/jessie-ai/issues" },
+  "homepage": "https://github.com/Arther100/jessie-ai#readme",
   "keywords": ["ai", "copilot", "agent", "prompt", "code quality", "rag", "assistant", "code review", "merge review", "azure", "claude"],
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
@@ -30,7 +30,7 @@
     ],
     "commands": [
       { "command": "jessie.ask",           "title": "Ask Jessie",                    "category": "Jessie" },
-      { "command": "jessie.setup",         "title": "Setup Jessie Backend",          "category": "Jessie" },
+      { "command": "jessie.setup",         "title": "Setup Jessie",                  "category": "Jessie" },
       { "command": "jessie.showRequests",  "title": "My Request Count Today",        "category": "Jessie" },
       { "command": "jessie.tour",          "title": "How to Use Jessie",             "category": "Jessie" },
       { "command": "jessie.reviewProject", "title": "Code Review",                   "category": "Jessie", "icon": "$(search)" },
@@ -38,7 +38,13 @@
       { "command": "jessie.mergeReview",   "title": "Merge Review",                  "category": "Jessie", "icon": "$(git-merge)" },
       { "command": "jessie.history",       "title": "History",                       "category": "Jessie", "icon": "$(history)" },
       { "command": "jessie.settings",      "title": "Settings",                      "category": "Jessie", "icon": "$(gear)" },
-      { "command": "jessie.info",          "title": "Info (Claude key)",              "category": "Jessie", "icon": "$(info)" }
+      { "command": "jessie.info",          "title": "Info (Claude key)",              "category": "Jessie", "icon": "$(info)" },
+      { "command": "jessie.updateApiKey",  "title": "Update API Key",                "category": "Jessie", "icon": "$(key)" },
+      { "command": "jessie.checkApiKey",   "title": "Check API Key Status",          "category": "Jessie", "icon": "$(shield)" },
+      { "command": "jessie.fixTicket",      "title": "Fix Ticket",                     "category": "Jessie", "icon": "$(issues)" },
+      { "command": "jessie.scanSprint",      "title": "Scan Sprint Board",              "category": "Jessie", "icon": "$(checklist)" },
+      { "command": "jessie.openTicketBoard", "title": "Open Ticket Board",              "category": "Jessie", "icon": "$(project)" },
+      { "command": "jessie.weeklyReport",    "title": "Generate Weekly Report",         "category": "Jessie", "icon": "$(graph)" }
     ],
     "menus": {
       "explorer/context": [
@@ -53,7 +59,13 @@
         { "command": "jessie.mergeReview" },
         { "command": "jessie.history" },
         { "command": "jessie.settings" },
-        { "command": "jessie.info" }
+        { "command": "jessie.info" },
+        { "command": "jessie.updateApiKey" },
+        { "command": "jessie.checkApiKey" },
+        { "command": "jessie.fixTicket" },
+        { "command": "jessie.scanSprint" },
+        { "command": "jessie.openTicketBoard" },
+        { "command": "jessie.weeklyReport" }
       ]
     },
     "viewsContainers": {
@@ -70,12 +82,20 @@
       "title": "Jessie",
       "properties": {
         "jessie.userId": {
-          "type": "string", "default": "",
-          "description": "Your name or team identifier (used for request tracking)"
+          "type": "string",
+          "default": "",
+          "description": "Your name or identifier"
         },
         "jessie.backendUrl": {
-          "type": "string", "default": "http://localhost:8000",
-          "description": "Jessie backend URL. Default: local. Change to your team's hosted URL."
+          "type": "string",
+          "default": "https://jessie-ai-xpv2.onrender.com",
+          "description": "Jessie backend URL. Pre-filled with the hosted Render server."
+        },
+        "jessie.aiProvider": {
+          "type": "string",
+          "enum": ["anthropic", "openai", "gemini"],
+          "default": "anthropic",
+          "description": "AI provider for Jessie"
         },
         "jessie.webAppUrl": {
           "type": "string", "default": "http://localhost:3000",
@@ -84,13 +104,43 @@
         "jessie.azureGitUrl": {
           "type": "string", "default": "",
           "description": "Last used Azure Git URL (https://dev.azure.com/{org}/{project}/_git/{repo})."
+        },
+        "jessie.ticketPlatform": {
+          "type": "string",
+          "enum": ["azure", "jira", "github", "linear"],
+          "default": "azure",
+          "description": "Default ticket platform for Jessie Fix Ticket / Sprint Board."
+        },
+        "jessie.autoFixOnAssign": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-start fix when ticket assigned to you in VS Code."
+        },
+        "jessie.cicdAutoFix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-fix CI/CD failures when Jessie can handle them."
+        },
+        "jessie.azureOrg": {
+          "type": "string", "default": "",
+          "description": "Azure DevOps organisation for ticket boards."
+        },
+        "jessie.azureProject": {
+          "type": "string", "default": "",
+          "description": "Azure DevOps project for ticket boards."
+        },
+        "jessie.githubRepo": {
+          "type": "string", "default": "",
+          "description": "GitHub owner/repo for issues + PRs."
         }
       }
     },
     "keybindings": [
       { "command": "jessie.ask",           "key": "ctrl+shift+j", "mac": "cmd+shift+j" },
       { "command": "jessie.reviewProject", "key": "ctrl+shift+r", "mac": "cmd+shift+r" },
-      { "command": "jessie.mergeReview",   "key": "ctrl+shift+m", "mac": "cmd+shift+m" }
+      { "command": "jessie.mergeReview",   "key": "ctrl+shift+m", "mac": "cmd+shift+m" },
+      { "command": "jessie.fixTicket",     "key": "ctrl+shift+t", "mac": "cmd+shift+t" },
+      { "command": "jessie.openTicketBoard","key": "ctrl+shift+b", "mac": "cmd+shift+b" }
     ]
   },
   "scripts": {

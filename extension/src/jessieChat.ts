@@ -43,7 +43,7 @@ async function handleChat(
     }
 
     const cfg        = vscode.workspace.getConfiguration('jessie');
-    const backendUrl = cfg.get<string>('backendUrl') || 'http://localhost:8000';
+    const backendUrl = cfg.get<string>('backendUrl') || 'https://jessie-ai-xpv2.onrender.com';
     const userId     = cfg.get<string>('userId') || 'anonymous';
 
     const editor          = vscode.window.activeTextEditor;

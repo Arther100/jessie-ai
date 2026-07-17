@@ -21,6 +21,7 @@ def prompt_coach_node(state: AgentState) -> AgentState:
     selected     = state.get("selected_code", "")
     error        = state.get("error_message", "")
     user_id      = state.get("user_id", "anonymous")
+    team_id      = state.get("team_id", "default") or "default"
     retry_feedback = state.get("quality_feedback", "")
 
     status = list(state.get("status_updates", []))
@@ -34,7 +35,7 @@ def prompt_coach_node(state: AgentState) -> AgentState:
 
     # Check user memory for their patterns
     memory = MemoryStore()
-    user_patterns = memory.read_user(user_id, "prompt_patterns") or {}
+    user_patterns = memory.read_user(user_id, "prompt_patterns", team_id=team_id) or {}
 
     # If good prompt and not a retry — minimal rewrite
     if quality >= 7 and not retry_feedback:

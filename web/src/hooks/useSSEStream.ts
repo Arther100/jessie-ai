@@ -1,5 +1,7 @@
 "use client";
 import { useState, useCallback } from "react";
+import { authHeaders } from "@/lib/api";
+import { clearApiKey } from "@/lib/keyStorage";
 
 const BASE = process.env.NEXT_PUBLIC_JESSIE_API ?? "http://localhost:8000";
 
@@ -27,9 +29,23 @@ export function useSSEStream<T = unknown>(path: string) {
       try {
         const res = await fetch(`${BASE}${path}`, {
           method:  "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(),
           body:    JSON.stringify(body),
         });
+
+        if (res.status === 401) {
+          try {
+            const data = await res.json();
+            if (data?.error === "api_key_required" || data?.detail?.error === "api_key_required") {
+              clearApiKey();
+              window.dispatchEvent(new CustomEvent("jessie:api-key-required"));
+            }
+          } catch { /* ignore */ }
+          const msg = "API key required. Please add your key to continue.";
+          setError(msg);
+          opts.onError?.(msg);
+          return false;
+        }
 
         if (!res.ok || !res.body) {
           let detail = "";
@@ -79,7 +95,12 @@ export function useSSEStream<T = unknown>(path: string) {
               setPct(100);
               opts.onComplete?.(event as unknown as T);
             } else if (event.type === "error") {
+              const code = (event as { code?: string }).code;
               const msg = (event as { message?: string }).message ?? "Unknown error";
+              if (code === "api_key_required" || code === "claude_key_required") {
+                clearApiKey();
+                window.dispatchEvent(new CustomEvent("jessie:api-key-required"));
+              }
               failed = true;
               setError(msg);
               opts.onError?.(msg);

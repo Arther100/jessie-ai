@@ -1,9 +1,12 @@
 """
 Jessie — backend/memory/store.py
-3-layer isolated memory store.
-Layer 1 — project:{workspace_id}:{topic}   → scoped to one project
-Layer 2 — user:{user_id}:{topic}           → personal per developer
-Layer 3 — team:global:{topic}              → universal rules only
+3-layer isolated memory store with team isolation via API-key hash.
+
+Layer 1 — project:{team_id}:{workspace_id}:{topic}  → scoped to one team+project
+Layer 2 — user:{team_id}:{user_id}:{topic}          → personal per developer per team
+Layer 3 — team:global:{topic}                       → universal rules (shared by all)
+
+team_id = sha256(api_key)[:16] — never store the key itself.
 Auto-initialises SQLite on first use. Zero setup commands.
 """
 
@@ -22,22 +25,22 @@ class MemoryStore:
 
     # ── Layer 1: Project ───────────────────────────────────────────────────
 
-    def write_project(self, workspace_id: str, topic: str, value: Dict):
-        self._write(f"project:{workspace_id}:{topic}", value)
+    def write_project(self, workspace_id: str, topic: str, value: Dict, team_id: str = "default"):
+        self._write(f"project:{team_id}:{workspace_id}:{topic}", value)
 
-    def read_project(self, workspace_id: str, topic: str) -> Optional[Dict]:
-        return self._read(f"project:{workspace_id}:{topic}")
+    def read_project(self, workspace_id: str, topic: str, team_id: str = "default") -> Optional[Dict]:
+        return self._read(f"project:{team_id}:{workspace_id}:{topic}")
 
-    def search_project(self, workspace_id: str, prefix: str):
-        return self._search(f"project:{workspace_id}:{prefix}")
+    def search_project(self, workspace_id: str, prefix: str, team_id: str = "default"):
+        return self._search(f"project:{team_id}:{workspace_id}:{prefix}")
 
     # ── Layer 2: User ──────────────────────────────────────────────────────
 
-    def write_user(self, user_id: str, topic: str, value: Dict):
-        self._write(f"user:{user_id}:{topic}", value)
+    def write_user(self, user_id: str, topic: str, value: Dict, team_id: str = "default"):
+        self._write(f"user:{team_id}:{user_id}:{topic}", value)
 
-    def read_user(self, user_id: str, topic: str) -> Optional[Dict]:
-        return self._read(f"user:{user_id}:{topic}")
+    def read_user(self, user_id: str, topic: str, team_id: str = "default") -> Optional[Dict]:
+        return self._read(f"user:{team_id}:{user_id}:{topic}")
 
     # ── Layer 3: Team (universal only) ────────────────────────────────────
 
@@ -49,31 +52,35 @@ class MemoryStore:
 
     # ── Read with fallback (Project → User → Team) ─────────────────────────
 
-    def read_with_fallback(self, workspace_id: str, user_id: str, topic: str) -> Optional[Dict]:
+    def read_with_fallback(
+        self, workspace_id: str, user_id: str, topic: str, team_id: str = "default",
+    ) -> Optional[Dict]:
         return (
-            self.read_project(workspace_id, topic) or
-            self.read_user(user_id, topic) or
+            self.read_project(workspace_id, topic, team_id=team_id) or
+            self.read_user(user_id, topic, team_id=team_id) or
             self.read_team(topic)
         )
 
-    # ── Request count tracking (replaces token tracking in Phase 1) ────────
+    # ── Request count tracking (quota key: team_id:user_id + date) ─────────
 
-    def increment_request_count(self, user_id: str):
+    def increment_request_count(self, user_id: str, team_id: str = "default"):
         today = date.today().isoformat()
+        quota_key = f"{team_id}:{user_id}"
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
                 INSERT INTO request_log (user_id, date, count)
                 VALUES (?, ?, 1)
                 ON CONFLICT(user_id, date) DO UPDATE SET count = count + 1
-            """, (user_id, today))
+            """, (quota_key, today))
             conn.commit()
 
-    def get_request_count(self, user_id: str) -> int:
+    def get_request_count(self, user_id: str, team_id: str = "default") -> int:
         today = date.today().isoformat()
+        quota_key = f"{team_id}:{user_id}"
         with sqlite3.connect(DB_PATH) as conn:
             row = conn.execute(
                 "SELECT count FROM request_log WHERE user_id=? AND date=?",
-                (user_id, today)
+                (quota_key, today)
             ).fetchone()
         return row[0] if row else 0
 

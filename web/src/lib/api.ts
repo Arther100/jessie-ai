@@ -1,10 +1,54 @@
 // All backend API calls — base URL from env
+// BYOK: X-Claude-API-Key sent per request; never stored on server.
+import {
+  clearApiKey,
+  getApiKey,
+  getProvider,
+  getUserId,
+  getWorkspaceId,
+} from "./keyStorage";
+
 const BASE = process.env.NEXT_PUBLIC_JESSIE_API ?? "http://localhost:8000";
+
+export type ApiKeyRequiredHandler = () => void;
+let _onApiKeyRequired: ApiKeyRequiredHandler | null = null;
+
+export function setOnApiKeyRequired(handler: ApiKeyRequiredHandler): void {
+  _onApiKeyRequired = handler;
+}
+
+export function authHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "X-Claude-API-Key": getApiKey() || "",
+    "X-AI-Provider": getProvider() || "anthropic",
+    "X-User-Id": getUserId() || "web_user",
+    "X-Workspace-Id": getWorkspaceId() || "web",
+  };
+}
+
+async function handleUnauthorized(res: Response): Promise<void> {
+  if (res.status !== 401) return;
+  try {
+    const data = await res.clone().json();
+    if (data?.error === "api_key_required" || data?.detail?.error === "api_key_required") {
+      clearApiKey();
+      _onApiKeyRequired?.();
+    }
+  } catch {
+    clearApiKey();
+    _onApiKeyRequired?.();
+  }
+}
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(`${BASE}${path}`);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString(), { cache: "no-store" });
+  const res = await fetch(url.toString(), {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  await handleUnauthorized(res);
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.text()).trim(); } catch { /* ignore */ }
@@ -16,9 +60,10 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
+  await handleUnauthorized(res);
   if (!res.ok) {
     let detail = "";
     try { detail = (await res.text()).trim(); } catch { /* ignore */ }
@@ -30,11 +75,36 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 async function put<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
+  await handleUnauthorized(res);
   if (!res.ok) throw new Error(`PUT ${path} → ${res.status}`);
   return res.json() as Promise<T>;
+}
+
+export async function verifyApiKey(
+  key: string,
+  provider: string,
+): Promise<{ valid: boolean; model?: string; message: string }> {
+  const res = await fetch(`${BASE}/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Claude-API-Key": key,
+      "X-AI-Provider": provider,
+      "X-User-Id": getUserId() || "web_user",
+      "X-Workspace-Id": getWorkspaceId() || "web",
+    },
+  });
+  const data = await res.json();
+  if (res.ok && data.valid) {
+    return { valid: true, model: data.model, message: data.message || "API key is valid ✓" };
+  }
+  return {
+    valid: false,
+    message: data.message || "API key rejected. Check your key.",
+  };
 }
 
 export const api = {
@@ -80,6 +150,8 @@ export const api = {
 
   testWebhook: () =>
     get<{ status: string; version: string }>("/webhook/test"),
+
+  verifyApiKey,
 };
 
 // ── Types ───────────────────────────────────────────────────────────────────

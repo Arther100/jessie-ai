@@ -16,6 +16,7 @@ import {
   workspaceIdFrom,
 } from './azure';
 import { streamSse } from './sse';
+import { buildAuthHeaders } from './apiKeys';
 
 interface ReviewIssue {
   severity?: string;
@@ -281,6 +282,10 @@ export class JessieCodeReview {
     );
 
     try {
+      const authHeaders = await buildAuthHeaders(
+        this._context,
+        String(body.workspace_id || 'default'),
+      );
       const result = await streamSse(
         `${this._backendUrl}/review/start`,
         body,
@@ -291,6 +296,7 @@ export class JessieCodeReview {
             stream?.progress(msg);
           }
         },
+        authHeaders,
       );
 
       if (result.type === 'complete') {

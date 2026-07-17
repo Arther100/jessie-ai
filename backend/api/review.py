@@ -18,13 +18,14 @@ import time
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.code_reviewer.node     import CodeReviewAgent
 from agents.code_reviewer.scorer   import ReviewScorer
 from agents.code_reviewer.reporter import MarkdownReporter
+from gateway.auth_headers import auth_from_request, extract_auth_from_headers, get_team_id
 from gateway.quota import QuotaManager, QuotaExceeded
 from memory.store import DB_PATH
 
@@ -199,11 +200,21 @@ class ReviewRequest(BaseModel):
 # ── POST /review/start ─────────────────────────────────────────────────────
 
 @review_router.post("/start")
-async def start_review(req: ReviewRequest):
+async def start_review(req: ReviewRequest, request: Request):
     """
-    SSE stream.  Yields progress events while the review runs, then
-    one "complete" or "error" event, then data: [DONE].
+    SSE stream. Requires X-Claude-API-Key (or body claude_api_key for legacy clients).
     """
+    auth = auth_from_request(request, require_key=False)
+    api_key = (auth.api_key or req.claude_api_key or "").strip()
+    if not api_key:
+        extract_auth_from_headers(
+            api_key="", provider=None, user_id=None, workspace_id=None, require_key=True,
+        )
+
+    user_id = auth.user_id if auth.user_id != "anon" else req.user_id
+    workspace_id = auth.workspace_id if auth.workspace_id != "default" else req.workspace_id
+    team_id = get_team_id(api_key)
+    provider = auth.provider if auth.api_key else "anthropic"
 
     async def _generate():
         queue: asyncio.Queue = asyncio.Queue()
@@ -216,19 +227,16 @@ async def start_review(req: ReviewRequest):
             temp_root = None
             project_path = (req.project_path or "").strip()
             try:
-                if not (req.claude_api_key or "").strip():
+                if not api_key:
                     await queue.put({
                         "type": "error",
-                        "code": "claude_key_required",
-                        "message": (
-                            "Claude API key is required. "
-                            "Add your Anthropic key in Settings → Info (Claude), then retry."
-                        ),
+                        "code": "api_key_required",
+                        "message": "Include your Claude API key in the X-Claude-API-Key header.",
                     })
                     return
 
                 # ── Quota check ──────────────────────────────────────────────
-                quota = QuotaManager(user_id=req.user_id, workspace_id=req.workspace_id)
+                quota = QuotaManager(user_id=user_id, workspace_id=workspace_id, team_id=team_id)
                 remaining = quota.remaining()
                 if remaining < REVIEW_QUOTA_COST:
                     await queue.put({
@@ -266,9 +274,10 @@ async def start_review(req: ReviewRequest):
                 agent   = CodeReviewAgent()
                 results = await agent.review_project(
                     folder_path = project_path,
-                    user_id     = req.user_id,
+                    user_id     = user_id,
                     on_progress = on_progress,
-                    claude_api_key = req.claude_api_key.strip(),
+                    claude_api_key = api_key,
+                    provider = provider,
                 )
 
                 on_progress({"type": "progress", "message": "Calculating scores...", "pct": 95})

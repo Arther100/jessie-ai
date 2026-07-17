@@ -148,7 +148,7 @@ function getTourHtml(): string {
   <p style="margin-left:16px;margin-top:10px">
     Also set via <span class="kbd">Ctrl+,</span> → search <span class="highlight">jessie</span>:<br><br>
     <strong>jessie.userId</strong> — your name or team ID for quotas.<br><br>
-    <strong>jessie.backendUrl</strong> — defaults to <code>http://localhost:8000</code>.
+    <strong>jessie.backendUrl</strong> — defaults to the hosted Render server.
   </p>
   <div class="tip">🎉 You're all set! Press <span class="kbd">Ctrl+Shift+J</span> to ask Jessie, or run Code / Merge Review.</div>
 </div>

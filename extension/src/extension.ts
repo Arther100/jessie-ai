@@ -24,6 +24,17 @@ import { JessieCodeReview } from './codeReview';
 import { JessieMergeReview } from './mergeReview';
 import { showJessieHistory, showJessieSettings } from './history';
 import { showJessieInfo } from './info';
+import { JessieTicketAgent } from './ticketAgent';
+import { openTicketBoard } from './ticketBoard';
+import {
+  buildAuthHeaders,
+  clearApiKey,
+  getApiKey,
+  getProvider,
+  maskKey,
+  promptForApiKey,
+  verifyApiKey,
+} from './apiKeys';
 
 let statusBarItem: vscode.StatusBarItem;
 let sidebar: JessieSidebar;
@@ -31,6 +42,7 @@ let sidebar: JessieSidebar;
 let _proxy: JessieProxy | undefined;
 let _reviewer: JessieCodeReview | undefined;
 let _merger: JessieMergeReview | undefined;
+let _tickets: JessieTicketAgent | undefined;
 
 export function getProxy(): JessieProxy | undefined { return _proxy; }
 export function getReviewer(): JessieCodeReview | undefined { return _reviewer; }
@@ -46,30 +58,24 @@ export async function activate(context: vscode.ExtensionContext) {
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
-    const backendUrlResolved = getConfig('backendUrl') || 'http://localhost:8000';
+    const backendUrlResolved = getConfig('backendUrl') || 'https://jessie-ai-xpv2.onrender.com';
     _proxy    = new JessieProxy(statusBarItem, backendUrlResolved);
+    _proxy.setContext(context);
     _reviewer = new JessieCodeReview(statusBarItem, backendUrlResolved, context);
     _merger   = new JessieMergeReview(statusBarItem, context);
+    _tickets  = new JessieTicketAgent(context, statusBarItem);
 
     sidebar = new JessieSidebar(context.extensionUri);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('jessie.panel', sidebar)
     );
 
-    const backendUrl = backendUrlResolved;
-    const alive = await checkBackend(backendUrl);
-    if (!alive) {
-        setStatus('$(warning) Jessie — backend offline', 'warning');
-        vscode.window.showWarningMessage(
-            'Jessie backend is not running.',
-            'Setup Jessie'
-        ).then(choice => {
-            if (choice === 'Setup Jessie') {
-                vscode.commands.executeCommand('jessie.setup');
-            }
-        });
-    } else {
-        setStatus('$(sparkle) Jessie — ready');
+    await refreshKeyStatusBar(context);
+
+    const setupDone = context.globalState.get<boolean>('jessie.setupComplete');
+    const hasKey = !!(await getApiKey(context));
+    if (!setupDone || !hasKey) {
+        vscode.commands.executeCommand('jessie.setup');
     }
 
     context.subscriptions.push(
@@ -92,19 +98,52 @@ export async function activate(context: vscode.ExtensionContext) {
             });
             if (!prompt) return;
 
-            await runJessie(prompt, userId || getConfig('userId'), backendUrl);
+            await runJessie(prompt, userId || getConfig('userId'), backendUrl, context);
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('jessie.setup', () => {
             setupWalkthrough(context, async () => {
-                const alive = await checkBackend(getConfig('backendUrl'));
-                setStatus(
-                    alive ? '$(sparkle) Jessie — ready' : '$(warning) Jessie — backend offline',
-                    alive ? 'normal' : 'warning'
-                );
+                await refreshKeyStatusBar(context);
             });
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.updateApiKey', async () => {
+            await promptForApiKey(context);
+            await refreshKeyStatusBar(context);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.checkApiKey', async () => {
+            const key = await getApiKey(context);
+            const provider = getProvider();
+            if (!key) {
+                const choice = await vscode.window.showWarningMessage(
+                    'Jessie: No API key set.',
+                    'Add API key',
+                );
+                if (choice === 'Add API key') {
+                    await vscode.commands.executeCommand('jessie.updateApiKey');
+                }
+                return;
+            }
+            const result = await verifyApiKey(getConfig('backendUrl'), key, provider);
+            const choice = await vscode.window.showInformationMessage(
+                `Provider: ${provider}\nKey: ${maskKey(key)}\n${result.ok ? 'Valid ✓' : 'Invalid ✗'} — ${result.message}`,
+                'Update key',
+                'Delete key',
+            );
+            if (choice === 'Update key') {
+                await vscode.commands.executeCommand('jessie.updateApiKey');
+            } else if (choice === 'Delete key') {
+                await clearApiKey(context);
+                await refreshKeyStatusBar(context);
+                vscode.window.showInformationMessage('Jessie API key deleted from this device.');
+            }
         })
     );
 
@@ -157,6 +196,27 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.fixTicket', async (ticketId?: string) => {
+            await _tickets?.fixTicket(ticketId, 'command_palette');
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.scanSprint', async () => {
+            await _tickets?.scanSprint();
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.openTicketBoard', async () => {
+            await openTicketBoard(context);
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('jessie.weeklyReport', async () => {
+            await _tickets?.weeklyReport();
+        })
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('jessie.showRequests', async () => {
             const userId = getConfig('userId');
             const backendUrl = getConfig('backendUrl');
@@ -169,18 +229,42 @@ export async function activate(context: vscode.ExtensionContext) {
             } catch { vscode.window.showErrorMessage('Could not reach Jessie backend'); }
         })
     );
+
+    // Status bar click when key needed → setup
+    statusBarItem.command = 'jessie.ask';
+}
+
+async function refreshKeyStatusBar(context: vscode.ExtensionContext): Promise<void> {
+    const key = await getApiKey(context);
+    const provider = getProvider();
+    const label = provider === 'openai' ? 'OpenAI' : provider === 'gemini' ? 'Gemini' : 'Anthropic';
+    if (!key) {
+        setStatus('$(warning) Jessie — API key needed', 'warning');
+        statusBarItem.command = 'jessie.setup';
+        statusBarItem.tooltip = 'Add your API key to use Jessie';
+        return;
+    }
+    setStatus(`$(sparkle) Jessie — ready (${label})`);
+    statusBarItem.command = 'jessie.ask';
+    statusBarItem.tooltip = 'Jessie AI — ready';
 }
 
 
 // ── Core flow ──────────────────────────────────────────────────────────────
 
-async function runJessie(prompt: string, userId: string, backendUrl: string) {
+async function runJessie(
+    prompt: string,
+    userId: string,
+    backendUrl: string,
+    context: vscode.ExtensionContext,
+) {
     const editor = vscode.window.activeTextEditor;
     const openFileContent = editor?.document.getText().slice(0, 4000) || '';
     const selectedCode    = editor?.document.getText(editor.selection) || '';
     const language        = editor?.document.languageId || '';
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     const workspaceId     = Buffer.from(workspaceFolder).toString('base64').slice(0, 12);
+    const headers = await buildAuthHeaders(context, workspaceId);
 
     sidebar.clearAndShow();
 
@@ -193,7 +277,7 @@ async function runJessie(prompt: string, userId: string, backendUrl: string) {
             prompt, user_id: userId, workspace_id: workspaceId,
             language, open_file_content: openFileContent,
             selected_code: selectedCode, error_message: '',
-        });
+        }, { headers });
         const prep = prepRes.data;
 
         // Show live status updates from backend
@@ -263,7 +347,7 @@ async function runJessie(prompt: string, userId: string, backendUrl: string) {
                 selected_code:    selectedCode,
                 retry_count:      retryCount,
                 quality_feedback: qualityFeedback,
-            });
+            }, { headers });
 
             const resume = resumeRes.data;
             resume.status_updates?.forEach((s: string) => sidebar.addStatus(s));

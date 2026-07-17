@@ -192,3 +192,108 @@ async def webhook_gitlab(request: Request):
             logger.info("GitLab webhook — queued review for project %s MR !%s", project_id, mr_iid)
 
     return {"accepted": True}
+
+
+# ── Jessie v3 — CI/CD failure webhooks (additive) ──────────────────────────
+
+@webhook_router.post("/github/actions")
+async def webhook_github_actions(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    if payload.get("action") != "completed":
+        return {"accepted": True, "skipped": True}
+    run = payload.get("workflow_run") or {}
+    if run.get("conclusion") != "failure":
+        return {"accepted": True, "skipped": True}
+
+    asyncio.create_task(_run_cicd_fix({
+        "platform": "github",
+        "repo": (payload.get("repository") or {}).get("full_name", ""),
+        "branch": run.get("head_branch", ""),
+        "workflow": run.get("name", ""),
+        "run_id": run.get("id"),
+        "logs": f"Workflow {run.get('name')} failed on {run.get('head_branch')}",
+        "job_name": run.get("name", ""),
+        "failed_step": "workflow_run",
+    }))
+    return {"accepted": True}
+
+
+@webhook_router.post("/azure/pipelines")
+async def webhook_azure_pipelines(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    resource = payload.get("resource") or payload
+    result = (resource.get("result") or resource.get("status") or "").lower()
+    if result not in ("failed", "failure"):
+        return {"accepted": True, "skipped": True}
+
+    repo = ""
+    if isinstance(resource.get("repository"), dict):
+        repo = str(resource.get("repository", {}).get("name") or "")
+    definition = resource.get("definition") if isinstance(resource.get("definition"), dict) else {}
+    asyncio.create_task(_run_cicd_fix({
+        "platform": "azure",
+        "repo": repo,
+        "branch": resource.get("sourceBranch", ""),
+        "workflow": definition.get("name", "pipeline"),
+        "run_id": resource.get("id"),
+        "logs": f"Azure pipeline failed: {resource.get('id')}",
+        "job_name": "azure-pipelines",
+        "failed_step": "pipeline",
+    }))
+    return {"accepted": True}
+
+
+@webhook_router.post("/gitlab/pipeline")
+async def webhook_gitlab_pipeline(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    attrs = payload.get("object_attributes") or payload
+    status = attrs.get("status", "")
+    if status != "failed":
+        return {"accepted": True, "skipped": True}
+
+    asyncio.create_task(_run_cicd_fix({
+        "platform": "gitlab",
+        "repo": str((payload.get("project") or {}).get("path_with_namespace") or ""),
+        "branch": attrs.get("ref", ""),
+        "workflow": "gitlab-pipeline",
+        "run_id": attrs.get("id"),
+        "logs": f"GitLab pipeline {attrs.get('id')} failed",
+        "job_name": "pipeline",
+        "failed_step": "pipeline",
+    }))
+    return {"accepted": True}
+
+
+async def _run_cicd_fix(meta: dict):
+    try:
+        from agents.cicd_agent.node import CICDAgent
+        agent = CICDAgent()
+        key = os.getenv("ANTHROPIC_API_KEY", "")
+        info = await agent.classify_failure(
+            logs=str(meta.get("logs") or "")[:10000],
+            failed_step=str(meta.get("failed_step") or ""),
+            job_name=str(meta.get("job_name") or ""),
+            claude_api_key=key,
+        )
+        comment = agent.generate_pr_comment(info, None, bool(info.get("fixable_by_ai")))
+        logger.info(
+            "CICD webhook classified %s fixable=%s — %s",
+            meta.get("platform"),
+            info.get("fixable_by_ai"),
+            info.get("summary"),
+        )
+        logger.info("PR comment draft: %s", comment[:200])
+    except Exception:
+        logger.exception("CICD webhook handler failed")

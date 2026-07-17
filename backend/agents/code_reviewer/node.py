@@ -221,6 +221,7 @@ class CodeReviewAgent:
         user_id:     str = "unknown",
         on_progress: Optional[Callable] = None,
         claude_api_key: str = "",
+        provider: str = "anthropic",
     ) -> dict:
         """
         Full project review.  Returns:
@@ -264,10 +265,9 @@ class CodeReviewAgent:
         key = (claude_api_key or "").strip()
         if not key:
             raise ValueError(
-                "Claude API key is required. Add your Anthropic key in Jessie Settings "
-                "(web → Settings → Tokens, or extension → Jessie: Settings)."
+                "API key is required. Include X-Claude-API-Key header."
             )
-        router        = ModelRouter(api_key=key)
+        router        = ModelRouter(api_key=key, provider=provider or "anthropic")
         tokens_used   = 0
         cost_estimate = 0.0
 

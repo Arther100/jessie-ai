@@ -1,5 +1,6 @@
 /**
  * Minimal SSE client for Jessie review/merge endpoints.
+ * Pass BYOK headers via `headers` (X-Claude-API-Key, X-AI-Provider, …).
  */
 
 export type SseHandler = (event: Record<string, unknown>) => void;
@@ -8,10 +9,14 @@ export async function streamSse(
   url: string,
   body: unknown,
   onEvent: SseHandler,
+  headers?: Record<string, string>,
 ): Promise<Record<string, unknown>> {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers || {}),
+    },
     body: JSON.stringify(body),
   });
 

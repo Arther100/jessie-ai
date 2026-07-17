@@ -1,0 +1,5 @@
+.jessie/
+__pycache__/
+*.pyc
+.env
+tests/

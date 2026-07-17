@@ -7,11 +7,11 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Eye, EyeOff, Check, X } from "lucide-react";
 
-type Tab = "profile" | "tokens" | "quotas" | "webhooks" | "info";
+type Tab = "profile" | "apikeys" | "tokens" | "quotas" | "webhooks" | "info";
 
 const PLATFORMS = ["GitHub", "Azure DevOps", "GitLab"] as const;
 const CLAUDE_PLATFORM = "Claude";
-const TABS: Tab[] = ["profile", "tokens", "quotas", "webhooks", "info"];
+const TABS: Tab[] = ["profile", "apikeys", "tokens", "quotas", "webhooks", "info"];
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
@@ -21,7 +21,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get("tab");
-    if (t === "info" || t === "tokens" || t === "profile" || t === "quotas" || t === "webhooks") {
+    if (t === "info" || t === "tokens" || t === "profile" || t === "quotas" || t === "webhooks" || t === "apikeys") {
       setTab(t);
       setVisited(prev => new Set(prev).add(t));
     }
@@ -56,7 +56,7 @@ export default function SettingsPage() {
               "flex-1 px-3 py-1.5 rounded-md text-sm font-medium capitalize transition-colors",
               tab === t ? "bg-white dark:bg-gray-700 shadow-sm" : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
             )}>
-            {t === "quotas" ? "Team Quotas" : t === "webhooks" ? "CI/CD" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "quotas" ? "Team Quotas" : t === "webhooks" ? "CI/CD" : t === "apikeys" ? "API Keys" : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -64,6 +64,9 @@ export default function SettingsPage() {
       <div className="rounded-xl border dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
         {visited.has("profile") && (
           <div hidden={tab !== "profile"}><ProfileTab /></div>
+        )}
+        {visited.has("apikeys") && (
+          <div hidden={tab !== "apikeys"}><ApiKeysTab /></div>
         )}
         {visited.has("tokens") && (
           <div hidden={tab !== "tokens"}><TokensTab /></div>
@@ -118,6 +121,170 @@ function ProfileTab() {
           saved ? "bg-green-600" : "bg-indigo-600 hover:bg-indigo-700")}>
         {saved ? <><Check size={14} /> Saved!</> : "Save Profile"}
       </button>
+    </div>
+  );
+}
+
+function ApiKeysTab() {
+  const [provider, setProvider] = useState<"anthropic" | "openai" | "gemini">("anthropic");
+  const [key, setKey] = useState("");
+  const [show, setShow] = useState(false);
+  const [status, setStatus] = useState("");
+  const [ok, setOk] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [current, setCurrent] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Lazy import to avoid SSR issues — already client component
+    const { getApiKey, getProvider } = require("@/lib/keyStorage") as typeof import("@/lib/keyStorage");
+    setCurrent(getApiKey());
+    setProvider(getProvider());
+  }, []);
+
+  async function testConnection() {
+    const { getApiKey, getProvider } = await import("@/lib/keyStorage");
+    const k = key.trim() || getApiKey();
+    const p = provider || getProvider();
+    if (!k) {
+      setOk(false);
+      setStatus("No API key set.");
+      return;
+    }
+    setBusy(true);
+    const result = await api.verifyApiKey(k, p);
+    setBusy(false);
+    setOk(result.valid);
+    setStatus(result.valid ? `✓ Connected — ${result.model || "ok"}` : result.message);
+  }
+
+  async function saveKey() {
+    const { saveApiKey, getApiKey } = await import("@/lib/keyStorage");
+    if (!key.trim()) {
+      setOk(false);
+      setStatus("Enter a key first.");
+      return;
+    }
+    setBusy(true);
+    const result = await api.verifyApiKey(key.trim(), provider);
+    setBusy(false);
+    if (!result.valid) {
+      setOk(false);
+      setStatus(result.message);
+      return;
+    }
+    saveApiKey(key.trim(), provider);
+    setCurrent(getApiKey());
+    setKey("");
+    setOk(true);
+    setStatus(result.message);
+  }
+
+  async function deleteKey() {
+    const { clearApiKey } = await import("@/lib/keyStorage");
+    clearApiKey();
+    setCurrent(null);
+    setKey("");
+    setOk(null);
+    setStatus("Key deleted from this browser.");
+  }
+
+  async function changeProvider(next: "anthropic" | "openai" | "gemini") {
+    const { clearApiKey } = await import("@/lib/keyStorage");
+    clearApiKey();
+    setProvider(next);
+    setCurrent(null);
+    setKey("");
+    setStatus("Provider changed — enter a new key.");
+    setOk(null);
+  }
+
+  const masked = current
+    ? `${current.slice(0, 7)}••••••••••••${current.slice(-4)}`
+    : "Not set";
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-lg font-semibold">API Keys</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        Your API key is stored only in this browser. It is sent to Jessie&apos;s server only during
+        AI requests and never saved there.
+      </p>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">Provider</label>
+        <div className="flex gap-2 flex-wrap">
+          {(["anthropic", "openai", "gemini"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => changeProvider(p)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm border capitalize",
+                provider === p
+                  ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950"
+                  : "border-gray-300 dark:border-gray-600",
+              )}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-lg border dark:border-gray-700 p-4 space-y-2 text-sm">
+        <div><span className="text-gray-500">Provider:</span> <span className="capitalize font-medium">{provider}</span></div>
+        <div><span className="text-gray-500">Key:</span> <code className="ml-1">{masked}</code></div>
+        <div>
+          <span className="text-gray-500">Status:</span>{" "}
+          {ok === true ? "✓ Valid" : ok === false ? "✗ Invalid" : current ? "Saved" : "Not set"}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-1">Update key</label>
+        <div className="flex gap-2">
+          <input
+            type={show ? "text" : "password"}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder={provider === "openai" ? "sk-..." : provider === "gemini" ? "AIza..." : "sk-ant-..."}
+            className="flex-1 rounded-lg border dark:border-gray-600 px-3 py-2 text-sm bg-white dark:bg-gray-800"
+          />
+          <button type="button" onClick={() => setShow((s) => !s)} className="px-3 border rounded-lg dark:border-gray-600">
+            {show ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={saveKey}
+          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+        >
+          Update key
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={testConnection}
+          className="px-4 py-2 rounded-lg border dark:border-gray-600 text-sm font-medium"
+        >
+          Test connection
+        </button>
+        <button
+          type="button"
+          onClick={deleteKey}
+          className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium"
+        >
+          Delete key
+        </button>
+      </div>
+
+      {status && (
+        <p className={cn("text-sm", ok === false ? "text-red-500" : "text-green-600")}>{status}</p>
+      )}
     </div>
   );
 }

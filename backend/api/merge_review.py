@@ -6,11 +6,12 @@ import time
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.merge_reviewer.node import MergeReviewAgent
+from gateway.auth_headers import auth_from_request, extract_auth_from_headers, get_team_id
 from memory.store import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -242,7 +243,17 @@ async def list_branches_get(
     ))
 
 @merge_router.post("/review")
-async def review_merge(req: MergeReviewRequest):
+async def review_merge(req: MergeReviewRequest, request: Request):
+    auth = auth_from_request(request, require_key=False)
+    api_key = (auth.api_key or req.claude_api_key or "").strip()
+    if not api_key:
+        extract_auth_from_headers(
+            api_key="", provider=None, user_id=None, workspace_id=None, require_key=True,
+        )
+    user_id = auth.user_id if auth.user_id != "anon" else req.user_id
+    workspace_id = auth.workspace_id if auth.workspace_id != "default" else req.workspace_id
+    provider = auth.provider if auth.api_key else "anthropic"
+
     async def _generate():
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -252,14 +263,11 @@ async def review_merge(req: MergeReviewRequest):
         async def _run():
             start = time.monotonic()
             try:
-                if not (req.claude_api_key or "").strip():
+                if not api_key:
                     await queue.put({
                         "type": "error",
-                        "code": "claude_key_required",
-                        "message": (
-                            "Claude API key is required. "
-                            "Add your Anthropic key in Settings → Info (Claude), then retry."
-                        ),
+                        "code": "api_key_required",
+                        "message": "Include your Claude API key in the X-Claude-API-Key header.",
                     })
                     return
 
@@ -269,8 +277,8 @@ async def review_merge(req: MergeReviewRequest):
                     repo=req.repo,
                     token=req.token,
                     mode=req.mode,
-                    user_id=req.user_id,
-                    workspace_id=req.workspace_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
                     base_branch=req.base_branch,
                     head_branch=req.head_branch,
                     pr_number=req.pr_number,
@@ -279,7 +287,8 @@ async def review_merge(req: MergeReviewRequest):
                     gitlab_project_id=req.gitlab_project_id,
                     post_comments=req.post_comments,
                     on_progress=on_progress,
-                    claude_api_key=req.claude_api_key.strip(),
+                    claude_api_key=api_key,
+                    provider=provider,
                 )
                 report_path = _write_merge_markdown(req, result)
                 review_id = _save_merge_history(

@@ -1,31 +1,39 @@
-# ⚡ Jessie — AI Coding Agent (v2)
+# ⚡ Jessie — AI Coding Agent (v3)
 
-> Copilot coaching + Azure **Code Review** & **Merge Review** with Claude impact analysis.  
-> Web app and VS Code extension share the same Jessie backend.
+> BYOK (bring your own API key) · hosted backend · VS Code extension + optional web app.
 
-**Extension package:** `extension/jessie-ai-2.0.0.vsix`  
-**[Marketplace](https://marketplace.visualstudio.com/items?itemName=VijayArther.jessie-ai)** (when published)
+## Hosted backend
+
+| | |
+|--|--|
+| **Backend URL** | https://jessie-ai-xpv2.onrender.com |
+| **Health** | https://jessie-ai-xpv2.onrender.com/health |
+
+Users supply their own Claude / OpenAI / Gemini key. Keys are **never stored** on the server.
+
+**Extension package:** `extension/jessie-ai-3.0.0.vsix`  
+Install: `Ctrl+Shift+P` → **Extensions: Install from VSIX…**
 
 ---
 
-## What's new in v2
+## What's new in v3
 
-- **Claude API key (mandatory for reviews)** — each user adds their own key (web **Info** / extension **Jessie: Info**). Not a shared server secret for Code/Merge Review.
-- **Code Review** — Azure clone URL + PAT + branch; Flutter/Dart aware; Claude layer scores + project impact.
-- **Merge Review** — Azure base → head; Claude UI / functionality / risks / missing coverage; downloadable impact (web DOCX).
-- **Web ↔ Extension parity** — same `/review/start` and `/merge/review` APIs; Info surfaces for Claude setup.
-- **History** — past code & merge reviews on web and in the extension.
+- **Hosted backend** on Render (no local Python required for the extension).
+- **BYOK headers** — `X-Claude-API-Key` / `X-AI-Provider` on every AI request.
+- **Multi-provider** — Anthropic, OpenAI, Gemini.
+- **Team isolation** via API-key hash (memory + Chroma + quota).
+- **3-screen setup wizard** in the extension (welcome → key → name).
+- Ticket / sprint / analytics agents (DevOps layer).
 
 ---
 
 ## Total flow (high level)
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Web app :3000  │────▶│  Backend :8000   │◀────│  VS Code ext v2 │
-│  Review / Merge │     │  FastAPI + agents│     │  Same APIs      │
-│  Info + Claude  │     │  Claude per-user │     │  Info + Claude  │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌──────────────────────────────┐     ┌─────────────────┐
+│  Web (optional) │────▶│  https://jessie-ai-xpv2      │◀────│  VS Code ext v3 │
+│                 │     │  .onrender.com               │     │  BYOK + setup   │
+└─────────────────┘     └──────────────────────────────┘     └─────────────────┘
 ```
 
 ### Ask Jessie (Copilot)
@@ -37,67 +45,44 @@
 ### Code Review
 
 ```
-Claude key → Azure URL+PAT+branch (or local in extension) → clone/scan → Claude scores + impact → report
+API key → Azure URL+PAT+branch (or local) → clone/scan → scores + impact → report
 ```
 
 ### Merge Review
 
 ```
-Claude key → Azure base+head → diff → Claude impact → verdict + report
+API key → Azure base+head → diff → impact → verdict + report
 ```
 
 ---
 
-## How Ask Jessie works
+## Quick start (extension only)
 
-```
-@jessie "add a date picker to the booking form"
-        ↓
-[1] SUPERVISOR      — detects language, sets up workspace memory scope
-        ↓
-[2] PROMPT COACH    — scores quality, classifies complexity (1–10),
-                      rewrites prompt with file context + constraints
-        ↓
-[3] RAG INJECTOR    — checks project memory (component exists? reuse it)
-                      otherwise: scans codebase, injects top 4 files
-        ↓
-[4] COPILOT CALL    — model chosen by complexity score:
-                      1–3 → gpt-4o-mini  |  4–7 → gpt-4o  |  8–10 → claude-sonnet
-        ↓
-[5] QUALITY CHECK   — scores output 0–100 against 7-point rubric
-                      score < 70 → auto retry × 2 with failure feedback
-        ↓
-[6] MEMORY WRITER   — saves new component to project memory
-                      next time anyone asks → reused instantly, Copilot skipped
-```
+1. Use `extension/jessie-ai-3.0.0.vsix` (build with `cd extension && npm run compile && npx vsce package`)
+2. Install from VSIX in VS Code / Cursor
+3. Complete setup wizard (API key + name)
+4. Backend is already hosted at **https://jessie-ai-xpv2.onrender.com**
 
----
-
-## Quick start
-
-### 1. Backend
+### Local backend (optional)
 
 ```bash
 cd backend
 pip install -r requirements.txt
-python -m uvicorn api.main:app --reload --port 8000
+uvicorn api.main:app --reload --port 8000
 ```
 
-### 2. Web (optional)
+Then set `jessie.backendUrl` to `http://localhost:8000`.
+
+### Web (optional)
 
 ```bash
 cd web
 npm install
 npm run dev
-# → http://localhost:3000  → Info tab → add Claude key
+# → http://localhost:3000
 ```
 
-### 3. Extension v2
-
-1. Extensions → **Install from VSIX...** → `extension/jessie-ai-2.0.0.vsix`
-2. **Jessie: Info** → add Anthropic Claude key (`sk-ant-…`)
-3. Set `jessie.userId` in Settings
-4. Run **Code Review** / **Merge Review** / **Ask Jessie**
+Set `NEXT_PUBLIC_JESSIE_API=https://jessie-ai-xpv2.onrender.com` for the hosted API.
 
 ---
 
@@ -105,69 +90,25 @@ npm run dev
 
 ```
 jessie/
-├── backend/
-│   ├── api/                     ← /prepare, /resume, /review, /merge, /health
-│   ├── agents/
-│   │   ├── code_reviewer/       ← Project review + Claude impact
-│   │   ├── merge_reviewer/      ← Diff + Claude UI/functionality impact
-│   │   ├── prompt_coach/
-│   │   ├── rag_injector/
-│   │   ├── quality_analyser/
-│   │   └── memory_writer/
-│   ├── gateway/                 ← ModelRouter (per-user Claude key for reviews)
-│   └── requirements.txt
-├── web/                         ← Next.js dashboard, Review, Merge, Info
+├── backend/          ← FastAPI (deployed to Render)
+├── web/              ← Next.js (optional)
 ├── extension/
-│   ├── jessie-ai-2.0.0.vsix     ← Packaged extension v2
-│   ├── src/
-│   │   ├── extension.ts
-│   │   ├── codeReview.ts
-│   │   ├── mergeReview.ts
-│   │   ├── info.ts              ← Claude key + feature guide
-│   │   ├── azure.ts
-│   │   ├── jessieChat.ts
-│   │   └── sidebar.ts
-│   └── README.md
+│   ├── jessie-ai-3.0.0.vsix
+│   └── src/
 └── tests/
 ```
 
 ---
 
-## Memory — 3 isolated layers
-
-```
-project:{workspace_id}:{topic}  →  scoped to ONE repo only (zero cross-project leakage)
-user:{user_id}:{topic}          →  personal per developer
-team:global:{topic}             →  universal rules (future)
-```
-
----
-
-## Quality rubric (0–100) — Ask Jessie
-
-| Check | Points |
-|---|---|
-| Has real code (not just explanation) | +20 |
-| No TODOs or placeholder stubs | +15 |
-| Has error handling | +15 |
-| Matches detected language | +15 |
-| Correct scope (not a full file dump) | +15 |
-| Has comments/explanation | +10 |
-| Under 150 lines | +10 |
-
-Score ≥ 70 → delivered. Score < 70 → auto retry with failure feedback (max 2×).
-
----
-
-## Settings
+## Settings (extension)
 
 | Setting | Default | Description |
 |---|---|---|
-| `jessie.userId` | `""` | Your name or team ID |
-| `jessie.backendUrl` | `http://localhost:8000` | Backend URL |
-| `jessie.webAppUrl` | `http://localhost:3000` | Web app URL |
+| `jessie.userId` | `""` | Your name |
+| `jessie.backendUrl` | `https://jessie-ai-xpv2.onrender.com` | Hosted backend |
+| `jessie.aiProvider` | `anthropic` | anthropic / openai / gemini |
 
-Claude API key and Azure PAT are stored locally (browser / VS Code secrets), not in `settings.json`.
+API keys are stored in VS Code SecretStorage only.
 
 ---
 

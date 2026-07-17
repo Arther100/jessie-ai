@@ -3,8 +3,8 @@ Jessie — backend/gateway/semantic_cache.py
 ChromaDB-backed semantic cache to eliminate duplicate Claude API calls.
 
 How it works:
-  - Every prompt is embedded and stored with its response in a per-workspace
-    ChromaDB collection named  cache_{workspace_id}.
+  - Every prompt is embedded and stored in a per-team+workspace
+    ChromaDB collection named  cache_{team_id}_{workspace_id}.
   - On each new request, search_similar() queries the collection.
     If the nearest neighbour has cosine similarity ≥ threshold (default 0.92),
     the cached response is returned immediately — no Claude call, no cost.
@@ -30,14 +30,14 @@ _CHROMA_PATH = Path(".jessie/chroma_cache")
 
 class SemanticCache:
     """
-    Per-workspace ChromaDB semantic cache.
-    Each workspace gets its own isolated collection so there is
-    zero cross-project leakage of cached responses.
+    Per-team + per-workspace ChromaDB semantic cache.
+    team_id = sha256(api_key)[:16] — complete isolation between teams.
     """
 
-    def __init__(self, workspace_id: str):
+    def __init__(self, workspace_id: str, team_id: str = "default"):
         self.workspace_id = workspace_id
-        self._collection_name = f"cache_{workspace_id}"
+        self.team_id = team_id or "default"
+        self._collection_name = f"cache_{self.team_id}_{workspace_id}"
         self._client = self._make_client()
         self._collection = self._client.get_or_create_collection(
             name=self._collection_name,

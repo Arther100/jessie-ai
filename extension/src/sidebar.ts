@@ -146,6 +146,8 @@ export class JessieSidebar implements vscode.WebviewViewProvider {
   <button onclick="runCmd('jessie.ask')">Ask Jessie<span class="hint">Ctrl+Shift+J · prompt coach</span></button>
   <button onclick="runCmd('jessie.reviewProject')">Code Review<span class="hint">Azure branch or local folder</span></button>
   <button onclick="runCmd('jessie.mergeReview')">Merge Review<span class="hint">Azure base → head + Claude impact</span></button>
+  <button onclick="runCmd('jessie.openTicketBoard')">Ticket Board<span class="hint">Sprint scan · Fix tickets (v3)</span></button>
+  <button onclick="runCmd('jessie.fixTicket')">Fix Ticket<span class="hint">Ctrl+Shift+T</span></button>
   <button onclick="runCmd('jessie.history')">History<span class="hint">Past reviews &amp; open web dashboard</span></button>
   <button onclick="runCmd('jessie.info')">Info<span class="hint">Claude API key + feature guide</span></button>
   <button onclick="runCmd('jessie.settings')">Settings<span class="hint">User ID, backend, PAT</span></button>
