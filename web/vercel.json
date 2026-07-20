@@ -3,7 +3,7 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "env": {
-    "NEXT_PUBLIC_JESSIE_API": "https://jessie-backend.railway.app",
+    "NEXT_PUBLIC_JESSIE_API": "https://jessie-ai-xpv2.onrender.com",
     "NEXT_PUBLIC_APP_VERSION": "3.0.0"
   }
 }
