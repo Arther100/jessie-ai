@@ -9,6 +9,7 @@ type Board = {
   sprint?: string;
   sprint_name?: string;
   auto_fixable?: any[];
+  classified?: any[];
   ai_assist?: any[];
   human_only?: any[];
   health?: { health_score?: number; health_grade?: string; at_risk?: boolean };
@@ -143,7 +144,9 @@ export default function TicketsPage() {
               <div className="h-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} />
             </div>
             {updates.slice(-6).map((u, i) => (
-              <p key={i} className="text-xs text-gray-600 dark:text-gray-300">{u.message}</p>
+              <p key={i} className="text-xs text-gray-600 dark:text-gray-300">
+                {typeof u === "string" ? u : (u as { message?: string }).message || ""}
+              </p>
             ))}
           </div>
         )}
